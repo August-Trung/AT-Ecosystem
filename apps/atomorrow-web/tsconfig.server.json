@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "outDir": "build",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": [
+    "server/src/**/*.ts",
+    "src/data/**/*.ts",
+    "src/types.ts",
+    "src/utils/moderation.ts"
+  ],
+  "exclude": ["**/*.test.ts"]
+}

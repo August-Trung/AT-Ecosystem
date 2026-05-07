@@ -1,0 +1,84 @@
+<div id="editWrapper">
+    <div id="floatForm">
+    	<input id='toggleShowOption' name="toggleOption" type="button" value="Hide Edit Option" />
+        
+        <div id="panelWrapper">
+        	<br/>
+            <div id='selectPuzzleWrapper'>
+                Select puzzles:<br/>
+                <select id="puzzlesList" name="puzzlesList">
+                </select><br/>
+                <input id="prevPuzzle" name="prevPuzzle" class="button" type="button" value="Prev Puzzle">
+                <input id="nextPuzzle" name="nextPuzzle" class="button" type="button" value="Next Puzzle">
+                <br/><br/>
+            </div>
+            
+            <div id='editPuzzleWrapper'>
+                <input id='removePuzzle' name="removePuzzle" type="button" value="Remove Puzzle" />
+                <input id='movePuzzleUp' name="movePuzzleUp" type="button" value="Move Puzzle Up" />
+                <input id='movePuzzleDown' name="movePuzzleDown" type="button" value="Move Puzzle Down" />
+                <input id='addPuzzle' name="addPuzzle" type="button" value="Add Puzzle" />
+                <br/><br/>
+                Edit puzzle:<br/>
+                <input id="editPuzzle" name="editPuzzle" type="button" value="Edit puzzle">
+                <input id="editHidden" name="editHidden" type="button" value="Edit spot the differences">
+                <br/><br/>
+                Generate and replace array:
+                <input id='generateArray' name="generateArray" type="button" value="Generate Array" />
+                <textarea id="outputArray" name="outputArray" cols="" rows="10"></textarea>
+            </div>
+            
+            <div id="puzzleEditWrapper">
+            	Edit puzzle:<br/>
+            	<div class="formRowLong extraHeight">
+                    <label>Thumbnail:</label>
+                    <input id="thumbnail" name="thumbnail" type="text" />
+                </div>
+                <div class="formRowLong extraHeight">
+                    <label>Image:</label>
+                    <input id="image" name="image" type="text" />
+                </div>
+                <div class="formRowLong extraHeight">
+                    <label class="button">Timer:</label>
+                    <input id="timer" name="timer" type="text" />
+                </div>
+                <input id="updateImage" name="updateImage" type="button" value="Update Puzzle">
+                <input id='puzzleBack' name="puzzleBack" type="button" value="Done" />
+            </div>
+            
+            <div id="hiddenEditWrapper">
+            	Edit hidden area:<br/>
+                Select hidden area:<br/>
+                <select id="hiddenList" name="hiddenList">
+                </select><br/>
+                <input id="prevHidden" name="prevHidden" class="button" type="button" value="Prev Hidden">
+                <input id="nextHidden" name="nextHidden" class="button" type="button" value="Next Hidden">
+                <br/><br/>
+                
+                <!--<input id='addHidden' name="addHidden" type="button" value="Add Hidden" />-->
+                <input id='moveHiddenUp' name="moveHiddenUp" type="button" value="Move Hidden Up" />
+                <input id='moveHiddenDown' name="moveHiddenDown" type="button" value="Move Hidden Down" />
+                <br/><br/>
+                Double click on stage to add new hidden area.<br/>
+                <input id='removeHidden' name="removeHidden" type="button" value="Remove Hidden" />
+                <br/><br/>
+                
+                <div class="formRow">
+                    <label class="button">Position X:</label>
+                    <input id="hiddenX" name="hiddenX" class="button" type="text" />
+                </div>
+                <div class="formRow" >
+                    <label class="button">Position Y:</label>
+                    <input id="hiddenY" name="hiddenY" class="button" type="text" />
+                </div>
+                <div class="formRow" >
+                    <label class="button">Ratio:</label>
+                    <input id="hiddenRatio" name="hiddenRatio" class="button" type="text" />
+                </div>
+                <br/>
+                <input id='updateHidden' name="updateHidden" type="button" value="Update" />
+                <input id='hiddenBack' name="hiddenBack" type="button" value="Done" />
+            </div>
+         </div>
+    </div>
+</div>

@@ -1,0 +1,190 @@
+.block-blast-wrapper {
+	width: 100%;
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+	padding: clamp(1.5rem, 3vw, 2.75rem);
+	min-height: min(90vh, 900px);
+	box-sizing: border-box;
+}
+
+.block-blast-board {
+	display: grid;
+	grid-template-columns: repeat(10, 1fr);
+	gap: clamp(0.2rem, 0.8vw, 0.55rem);
+	width: min(100%, 560px);
+	margin: 0 auto;
+	position: relative;
+}
+
+@media (min-width: 1024px) {
+	.block-blast-board {
+		width: min(65vw, 560px);
+	}
+}
+
+.block-blast-board-shell {
+	position: relative;
+	overflow: hidden;
+}
+
+.block-blast-panel {
+	position: sticky;
+	top: 1rem;
+	align-self: flex-start;
+}
+
+.block-blast-mobile-drawer {
+	box-shadow: 0 25px 50px rgba(2, 6, 23, 0.45);
+}
+
+.block-blast-piece-scroll::-webkit-scrollbar {
+	height: 6px;
+}
+
+.block-blast-piece-scroll::-webkit-scrollbar-thumb {
+	background: rgba(148, 163, 184, 0.4);
+	border-radius: 999px;
+}
+
+.block-blast-piece-scroll {
+	touch-action: pan-y;
+}
+
+.block-blast-cell {
+	position: relative;
+	aspect-ratio: 1 / 1;
+	border-radius: 0.65rem;
+	background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.55));
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	overflow: hidden;
+	transition:
+		transform 0.15s ease,
+		background 0.2s ease,
+		border-color 0.2s ease;
+}
+
+.block-blast-cell::after {
+	content: "";
+	position: absolute;
+	inset: 3px;
+	border-radius: 0.5rem;
+	background: transparent;
+	opacity: 0;
+	transition: opacity 0.2s ease;
+}
+
+.block-blast-cell.valid::after {
+	background: rgba(34, 197, 94, 0.2);
+	opacity: 1;
+}
+
+.block-blast-cell.clearing {
+	animation: blockBlastClear 0.35s ease;
+}
+
+@keyframes blockBlastClear {
+	0% {
+		transform: scale(1);
+	}
+	50% {
+		transform: scale(1.08);
+	}
+	100% {
+		transform: scale(1);
+	}
+}
+
+.block-blast-piece-grid {
+	display: grid;
+	gap: 4px;
+}
+
+.block-blast-piece-cell {
+	width: 18px;
+	aspect-ratio: 1 / 1;
+	border-radius: 6px;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	background: rgba(148, 163, 184, 0.15);
+}
+
+.block-blast-piece-cell.filled {
+	border-color: transparent;
+}
+
+@media (min-width: 768px) {
+	.block-blast-piece-cell {
+		width: 22px;
+	}
+}
+
+@media (max-width: 767px) {
+	.block-blast-wrapper {
+		padding: 1.25rem 1rem 5rem;
+		min-height: auto;
+	}
+
+	.block-blast-board {
+		max-width: 420px;
+		gap: 0.25rem;
+	}
+
+	.block-blast-panel {
+		position: static;
+	}
+
+	.block-blast-mobile-drawer {
+		position: sticky;
+		bottom: 1rem;
+		border: 1px solid rgba(148, 163, 184, 0.3);
+		backdrop-filter: blur(16px);
+	}
+
+	.block-blast-piece-scroll {
+		margin: 0 -0.5rem;
+		padding: 0 0.5rem 0.4rem;
+	}
+}
+
+.block-blast-ghost {
+	position: fixed;
+	pointer-events: none;
+	z-index: 50;
+	transform: translate(-50%, -50%);
+	padding: 0.35rem;
+	border-radius: 1rem;
+	background: rgba(15, 23, 42, 0.75);
+	box-shadow: 0 20px 40px rgba(2, 6, 23, 0.35);
+}
+
+.block-blast-combo {
+	position: absolute;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 0.35rem 1rem;
+	border-radius: 999px;
+	font-size: 0.85rem;
+	text-transform: uppercase;
+	letter-spacing: 0.3em;
+	background: rgba(34, 211, 238, 0.15);
+	color: #a5f3fc;
+	border: 1px solid rgba(34, 211, 238, 0.4);
+	backdrop-filter: blur(8px);
+	animation: blockBlastCombo 0.9s ease;
+}
+
+@keyframes blockBlastCombo {
+	0% {
+		opacity: 0;
+		transform: translate(-50%, -10px);
+	}
+	30% {
+		opacity: 1;
+		transform: translate(-50%, 0);
+	}
+	100% {
+		opacity: 0;
+		transform: translate(-50%, -6px);
+	}
+}

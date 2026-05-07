@@ -1,0 +1,71 @@
+text,intent
+giúp tôi bật word để viết báo cáo,open_app
+cho mở cái bảng tính lên xem số liệu,open_app
+tôi cần dùng trình duyệt chrome,open_app
+vào visual studio code một chút,open_app
+mở ghi chú nhanh cho tôi,open_app
+đóng cái trình duyệt đang chạy là edge,close_app
+tắt hẳn microsoft word đi,close_app
+thoát khỏi zalo giúp tôi,close_app
+đóng toàn bộ cửa sổ chrome,close_app
+ngưng excel lại,close_app
+tìm dùm tôi bản báo cáo cuối cùng,find_file
+kiếm cái hợp đồng khách hàng mới tải,find_file
+tài liệu kế hoạch nằm đâu rồi,find_file
+mở giúp tôi slide họp tuần trước,find_file
+cho xem hóa đơn gần đây trong máy,find_file
+bỏ bản nháp báo cáo vào thùng rác,delete_file_name
+xóa cái file test tôi vừa tải,delete_file_name
+dọn tài liệu tạm trên desktop,delete_file_name
+remove file hóa đơn cũ,delete_file_name
+xóa folder thử nghiệm cũ,delete_file_name
+sao chép bản kế hoạch qua màn hình chính,copy_entry
+chép hóa đơn sang thư mục dự án,copy_entry
+copy slide thuyết trình vào ổ d,copy_entry
+nhân bản file doanh thu qua documents,copy_entry
+đưa hợp đồng sang downloads,move_entry
+chuyển file báo cáo qua ổ d,move_entry
+dời thư mục ảnh căn cước sang documents,move_entry
+move bảng lương vào desktop,move_entry
+mai sáng nhớ báo tôi họp với team,create_reminder
+15 phút nữa nhắc nghỉ mắt,create_reminder
+tối nay đừng quên nhắc tôi gọi khách,create_reminder
+sáng thứ hai nhắc backup dữ liệu,create_reminder
+ngày mai 7 rưỡi nhắc tôi đi khám,create_reminder
+tôi còn lịch nhắc nào không,list_reminders
+mở danh sách reminder,list_reminders
+xem các nhắc việc sắp đến,list_reminders
+việc nhắc đầu tiên xong rồi,complete_reminder
+đánh dấu lịch nhắc số hai hoàn tất,complete_reminder
+hoàn tất reminder này,complete_reminder
+hủy lịch nhắc số 1,delete_reminder
+bỏ cái reminder vừa tạo,delete_reminder
+xóa lịch nhắc thứ ba,delete_reminder
+đổi lịch nhắc đầu tiên sang 8 giờ tối,update_reminder
+dời reminder họp sang chiều mai,update_reminder
+cập nhật nội dung nhắc việc số 2,update_reminder
+để 20 phút nữa nhắc lại,snooze_reminder
+lùi nhắc việc này nửa tiếng,snooze_reminder
+tạm hoãn reminder 5 phút,snooze_reminder
+tìm trên mạng cách sửa lỗi máy in,web_search
+tra giúp tôi giá vàng hôm nay,web_search
+xem thông tin thời tiết sài gòn,web_search
+google hướng dẫn dùng google drive,web_search
+bật youtube nhạc tập trung làm việc,youtube_search
+mở video dạy excel trên youtube,youtube_search
+nghe playlist thư giãn ở youtube,youtube_search
+tìm karaoke trữ tình trên youtube,youtube_search
+hộp thư có gì mới không,check_email
+xem mail chưa đọc giúp tôi,check_email
+kiểm tra gmail mới nhất,check_email
+đọc email hôm nay,check_email
+soạn thư cho đối tác về lịch họp,send_email
+gửi mail báo cáo cho sếp,send_email
+viết email cho khách hàng,send_email
+phản hồi thư đầu tiên,reply_email
+trả lời mail của khách vừa gửi,reply_email
+reply email số ba,reply_email
+giải thích cho tôi học máy là gì,chat
+tôi muốn nói chuyện một chút,chat
+lập kế hoạch học tiếng anh cho tôi,chat
+bạn nghĩ tôi nên ưu tiên việc nào,chat

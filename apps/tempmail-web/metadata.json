@@ -1,0 +1,5 @@
+{
+  "name": "TempMail",
+  "description": "A robust temporary email service. Generate disposable email addresses and receive messages instantly.",
+  "requestFramePermissions": []
+}

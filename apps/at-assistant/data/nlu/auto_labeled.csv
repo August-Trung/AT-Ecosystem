@@ -1,0 +1,4 @@
+text,intent
+mở edge,open_app
+danh sách nhắc hẹn,list_reminders
+xem email,check_email

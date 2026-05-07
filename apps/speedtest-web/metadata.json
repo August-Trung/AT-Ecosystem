@@ -1,0 +1,7 @@
+{
+  "name": "MapMe - Auto Location Finder",
+  "description": "An intelligent app that automatically detects your current location and provides instant access to Google Maps with AI-enhanced context about your surroundings.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

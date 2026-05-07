@@ -1,0 +1,10 @@
+{"text": "thả hết phim", "allowed_types": ["keyboard_control"], "args": {"action": "release_all"}}
+{"text": "tha het phim", "allowed_types": ["keyboard_control"], "args": {"action": "release_all"}}
+{"text": "thả hết phím", "allowed_types": ["keyboard_control"], "args": {"action": "release_all"}}
+{"text": "Telegram user 6049486497 / chat -5198702606: thả hết phim", "allowed_types": ["keyboard_control"], "args": {"action": "release_all"}}
+{"text": "giữ l", "allowed_types": ["keyboard_control"], "args": {"action": "hold", "keys": ["l"]}}
+{"text": "nhấn giữ l 3 giây", "allowed_types": ["keyboard_control"], "args": {"action": "hold", "keys": ["l"], "duration_seconds": 3.0}}
+{"text": "thả l", "allowed_types": ["keyboard_control"], "args": {"action": "release", "keys": ["l"]}}
+{"text": "nhấn tổ hợp ctrl shift esc", "allowed_types": ["keyboard_control"], "args": {"action": "press_combo", "keys": ["ctrl", "shift", "escape"]}}
+{"text": "giữ ctrl shift", "allowed_types": ["keyboard_control"], "args": {"action": "hold", "keys": ["ctrl", "shift"]}}
+{"text": "thả ctrl shift", "allowed_types": ["keyboard_control"], "args": {"action": "release", "keys": ["ctrl", "shift"]}}

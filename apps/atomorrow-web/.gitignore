@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+data/
+.env
+.env.*
+!.env.example
+
+# Build and TypeScript artifacts
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+
+# Local dev output
+*.log
+verification-*.png
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

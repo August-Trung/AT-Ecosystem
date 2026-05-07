@@ -1,0 +1,50 @@
+{"text": "mở cái bảng tính lên xem số liệu", "allowed_types": ["open_app"], "args": {"app_name": "excel"}}
+{"text": "tôi cần dùng trình duyệt chrome", "allowed_types": ["open_app"], "args": {"app_name": "chrome"}}
+{"text": "vào visual studio code một chút", "allowed_types": ["open_app"], "args": {"app_name": "vscode"}}
+{"text": "mở ghi chú nhanh cho tôi", "allowed_types": ["open_app"], "args": {"app_name": "notepad"}}
+{"text": "tắt hẳn microsoft word đi", "allowed_types": ["close_app"], "risky": true}
+{"text": "đóng toàn bộ cửa sổ chrome", "allowed_types": ["close_app"], "risky": true}
+{"text": "tìm dùm tôi bản báo cáo cuối cùng", "allowed_types": ["find_file"], "args_contains": {"query": "báo cáo"}}
+{"text": "kiếm cái hợp đồng khách hàng mới tải", "allowed_types": ["find_file"], "args_contains": {"query": "hợp đồng"}}
+{"text": "tài liệu kế hoạch nằm đâu rồi", "allowed_types": ["find_file"], "args_contains": {"query": "kế hoạch"}}
+{"text": "cho xem hóa đơn gần đây trong máy", "allowed_types": ["find_file"], "args_contains": {"query": "hóa đơn"}}
+{"text": "mai sáng nhớ báo tôi họp với team", "allowed_types": ["create_reminder"], "args_contains": {"title": "họp"}}
+{"text": "15 phút nữa nhắc nghỉ mắt", "allowed_types": ["create_reminder"], "args_contains": {"title": "nghỉ mắt"}, "due": {"present": true}}
+{"text": "tối nay đừng quên nhắc tôi gọi khách", "allowed_types": ["create_reminder"], "args_contains": {"title": "gọi khách"}}
+{"text": "sáng thứ hai nhắc backup dữ liệu", "allowed_types": ["create_reminder"], "args_contains": {"title": "backup dữ liệu"}}
+{"text": "hộp thư có gì mới không", "allowed_types": ["check_email"]}
+{"text": "xem mail chưa đọc giúp tôi", "allowed_types": ["check_email"]}
+{"text": "soạn thư cho đối tác về lịch họp", "allowed_types": ["send_email"], "risky": true}
+{"text": "phản hồi thư đầu tiên", "allowed_types": ["reply_email"], "risky": true}
+{"text": "tìm trên mạng cách sửa lỗi máy in", "allowed_types": ["web_search"]}
+{"text": "tra giúp tôi giá vàng hôm nay", "allowed_types": ["web_search"]}
+{"text": "bật youtube nhạc tập trung làm việc", "allowed_types": ["youtube_search"], "args_contains": {"query": "nhạc tập trung"}}
+{"text": "mở video dạy excel trên youtube", "allowed_types": ["youtube_search"], "args_contains": {"query": "excel"}}
+{"text": "tôi còn lịch nhắc nào không", "allowed_types": ["list_reminders"]}
+{"text": "việc nhắc đầu tiên xong rồi", "allowed_types": ["complete_reminder"]}
+{"text": "để 20 phút nữa nhắc lại", "allowed_types": ["snooze_reminder"], "args": {"minutes": 20}}
+{"text": "mở cái đó lên", "allowed_types": ["fallback_to_llm", "chat"], "ambiguous": true, "forbidden_types": ["open_app", "find_file", "delete_file_name", "move_entry", "send_email"]}
+{"text": "làm cái hôm qua đi", "allowed_types": ["fallback_to_llm", "chat"], "ambiguous": true, "forbidden_types": ["open_app", "find_file", "delete_file_name", "move_entry", "send_email"]}
+{"text": "gửi cái file kia", "allowed_types": ["fallback_to_llm", "chat"], "ambiguous": true, "forbidden_types": ["send_email", "copy_entry", "move_entry"]}
+{"text": "nhắc tôi cái vụ đó", "allowed_types": ["create_reminder", "fallback_to_llm"], "ambiguous": true}
+{"text": "mở báo cáo", "allowed_types": ["find_file", "fallback_to_llm"], "ambiguous": true}
+{"text": "tôi muốn học cách quản lý file", "allowed_types": ["chat", "web_search"], "forbidden_types": ["find_file", "delete_file_name", "move_entry"]}
+{"text": "xóa trong lập trình nghĩa là gì", "allowed_types": ["chat"], "forbidden_types": ["delete_file_name"]}
+{"text": "email marketing là gì", "allowed_types": ["chat"], "forbidden_types": ["check_email", "send_email"]}
+{"text": "reminder app nên thiết kế thế nào", "allowed_types": ["chat"], "forbidden_types": ["create_reminder", "list_reminders"]}
+{"text": "đóng ứng dụng trong python là gì", "allowed_types": ["chat"], "forbidden_types": ["close_app"]}
+{"text": "xóa hết file trong ổ d", "allowed_types": ["delete_file_name", "fallback_to_llm"], "risky": true}
+{"text": "gửi mail cho toàn bộ khách", "allowed_types": ["send_email"], "risky": true}
+{"text": "đóng hết ứng dụng", "allowed_types": ["close_app", "fallback_to_llm"], "risky": true}
+{"text": "move toàn bộ documents sang desktop", "allowed_types": ["move_entry"], "risky": true}
+{"text": "xóa ổ c là gì", "allowed_types": ["chat"], "forbidden_types": ["delete_file_name", "system_power"]}
+{"text": "mo word giup toi", "allowed_types": ["open_app"], "args": {"app_name": "word"}}
+{"text": "nhac toi uong thuoc 8h toi", "allowed_types": ["create_reminder"], "args_contains": {"title": "uong thuoc"}}
+{"text": "kiem fie hop dong", "allowed_types": ["find_file", "fallback_to_llm"], "ambiguous": true}
+{"text": "xem hop thu moi", "allowed_types": ["check_email"]}
+{"text": "bat youtub nhac nhe", "allowed_types": ["youtube_search", "fallback_to_llm"], "ambiguous": true}
+{"text": "toi muon noi chuyen mot chut", "allowed_types": ["chat"], "forbidden_types": ["send_email", "move_entry"]}
+{"text": "giai thich cho toi hoc may la gi", "allowed_types": ["chat"], "forbidden_types": ["send_email"]}
+{"text": "lap ke hoach hoc tieng anh cho toi", "allowed_types": ["chat"], "forbidden_types": ["find_file", "send_email"]}
+{"text": "bạn nghĩ tôi nên ưu tiên việc nào", "allowed_types": ["chat"], "forbidden_types": ["list_reminders"]}
+{"text": "kiểm tra máy đang mở gì", "allowed_types": ["list_running_apps", "remote_overview", "system_status", "fallback_to_llm"]}

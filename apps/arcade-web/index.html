@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>AugustTrung Arcade</title>
+		<script src="https://cdn.tailwindcss.com"></script>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Rajdhani:wght@500;600;700&display=swap"
+			rel="stylesheet" />
+		<link rel="icon" type="image/png" href="/ver-bigger-logo.png" />
+		<style>
+			:root {
+				--primary-glow: conic-gradient(
+					from 180deg at 50% 50%,
+					#2a8af6 0deg,
+					#a853ba 180deg,
+					#e92a67 360deg
+				);
+			}
+			body {
+				background-color: #050505;
+				color: #ffffff;
+				font-family: "Outfit", sans-serif;
+				overflow-x: hidden;
+			}
+			h1,
+			h2,
+			h3,
+			h4,
+			h5,
+			h6 {
+				font-family: "Rajdhani", sans-serif;
+			}
+
+			/* Custom Scrollbar */
+			::-webkit-scrollbar {
+				width: 6px;
+				height: 6px;
+			}
+			::-webkit-scrollbar-track {
+				background: #0f0f13;
+			}
+			::-webkit-scrollbar-thumb {
+				background: #3b3b4f;
+				border-radius: 10px;
+			}
+			::-webkit-scrollbar-thumb:hover {
+				background: #a853ba;
+			}
+
+			/* Animated Background Mesh */
+			.bg-mesh {
+				position: fixed;
+				top: 0;
+				left: 0;
+				width: 100vw;
+				height: 100vh;
+				z-index: -1;
+				background: radial-gradient(
+						circle at 15% 50%,
+						rgba(76, 29, 149, 0.15),
+						transparent 25%
+					),
+					radial-gradient(
+						circle at 85% 30%,
+						rgba(233, 42, 103, 0.1),
+						transparent 25%
+					);
+			}
+
+			.glass-panel {
+				background: rgba(255, 255, 255, 0.03);
+				backdrop-filter: blur(10px);
+				-webkit-backdrop-filter: blur(10px);
+				border: 1px solid rgba(255, 255, 255, 0.05);
+			}
+
+			/* Animations */
+			@keyframes fadeInUp {
+				from {
+					opacity: 0;
+					transform: translateY(20px);
+				}
+				to {
+					opacity: 1;
+					transform: translateY(0);
+				}
+			}
+
+			.animate-fade-in-up {
+				animation: fadeInUp 0.5s ease-out forwards;
+			}
+		</style>
+		<script type="importmap">
+			{
+				"imports": {
+					"react/": "https://aistudiocdn.com/react@^19.2.0/",
+					"react": "https://aistudiocdn.com/react@^19.2.0",
+					"lucide-react": "https://aistudiocdn.com/lucide-react@^0.555.0",
+					"react-router-dom": "https://aistudiocdn.com/react-router-dom@^7.9.6",
+					"react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+					"path": "https://aistudiocdn.com/path@^0.12.7",
+					"fs": "https://aistudiocdn.com/fs@^0.0.1-security",
+					"url": "https://aistudiocdn.com/url@^0.11.4",
+					"vite": "https://aistudiocdn.com/vite@^7.2.4",
+					"@vitejs/plugin-react": "https://aistudiocdn.com/@vitejs/plugin-react@^5.1.1"
+				}
+			}
+		</script>
+		<link rel="stylesheet" href="/index.css" />
+	</head>
+	<body>
+		<div id="root"></div>
+		<div class="bg-mesh"></div>
+		<script type="module" src="/src/main.tsx"></script>
+		<script type="module" src="/index.tsx"></script>
+	</body>
+</html>

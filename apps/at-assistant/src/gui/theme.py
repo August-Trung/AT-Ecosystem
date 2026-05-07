@@ -1,0 +1,119 @@
+"""Theme tokens for ATAssistant GUI."""
+
+# ─── Window ──────────────────────────────────────────
+WINDOW_TITLE = "AT Assistant"
+WINDOW_WIDTH = 580
+WINDOW_HEIGHT = 750
+MIN_WIDTH = 420
+MIN_HEIGHT = 500
+
+DARK_THEME = {
+    "BG_PRIMARY": "#000000",
+    "BG_SECONDARY": "#0f0f0f",
+    "BG_INPUT": "#121212",
+    "BG_BUBBLE_USER": "#1a1a1a",
+    "BG_BUBBLE_BOT": "#101010",
+    "BG_BUBBLE_ERROR": "#2a1010",
+    "FG_PRIMARY": "#ffffff",
+    "FG_SECONDARY": "#b3b3b3",
+    "FG_USER": "#ffffff",
+    "FG_BOT": "#ffffff",
+    "FG_ERROR": "#ff6b6b",
+    "FG_SUCCESS": "#4ade80",
+    "FG_PLACEHOLDER": "#7a7a7a",
+    "ACCENT": "#2563eb",
+    "ACCENT_HOVER": "#3b82f6",
+    "ACCENT_CONFIRM": "#22c55e",
+    "ACCENT_CONFIRM_HOVER": "#4ade80",
+    "ACCENT_CANCEL": "#ef4444",
+    "ACCENT_CANCEL_HOVER": "#f87171",
+    "ACCENT_CHOICE": "#2a2a2a",
+    "ACCENT_CHOICE_HOVER": "#3a3a3a",
+    "BORDER_COLOR": "#242424",
+    "SCROLLBAR_COLOR": "#3a3a3a",
+    "SCROLLBAR_HOVER": "#5a5a5a",
+    "MIC_OFF_COLOR": "#1d4ed8",
+    "MIC_OFF_HOVER": "#2563eb",
+    "MIC_ON_COLOR": "#e94560",
+    "MIC_ON_HOVER": "#ff6b81",
+}
+
+LIGHT_THEME = {
+    "BG_PRIMARY": "#f4f7fb",
+    "BG_SECONDARY": "#ffffff",
+    "BG_INPUT": "#e9eef7",
+    "BG_BUBBLE_USER": "#dbeafe",
+    "BG_BUBBLE_BOT": "#ffffff",
+    "BG_BUBBLE_ERROR": "#fee2e2",
+    "FG_PRIMARY": "#0f172a",
+    "FG_SECONDARY": "#475569",
+    "FG_USER": "#0f172a",
+    "FG_BOT": "#0f172a",
+    "FG_ERROR": "#b91c1c",
+    "FG_SUCCESS": "#15803d",
+    "FG_PLACEHOLDER": "#64748b",
+    "ACCENT": "#2563eb",
+    "ACCENT_HOVER": "#1d4ed8",
+    "ACCENT_CONFIRM": "#16a34a",
+    "ACCENT_CONFIRM_HOVER": "#22c55e",
+    "ACCENT_CANCEL": "#dc2626",
+    "ACCENT_CANCEL_HOVER": "#ef4444",
+    "ACCENT_CHOICE": "#dbe4f0",
+    "ACCENT_CHOICE_HOVER": "#cbd5e1",
+    "BORDER_COLOR": "#d6dce6",
+    "SCROLLBAR_COLOR": "#cbd5e1",
+    "SCROLLBAR_HOVER": "#94a3b8",
+    "MIC_OFF_COLOR": "#60a5fa",
+    "MIC_OFF_HOVER": "#3b82f6",
+    "MIC_ON_COLOR": "#e94560",
+    "MIC_ON_HOVER": "#ff6b81",
+}
+
+
+def get_theme_palette(mode: str = "dark") -> dict[str, str]:
+    return DARK_THEME if (mode or "").lower() == "dark" else LIGHT_THEME
+
+
+_DEFAULT = get_theme_palette("dark")
+
+BG_PRIMARY = _DEFAULT["BG_PRIMARY"]
+BG_SECONDARY = _DEFAULT["BG_SECONDARY"]
+BG_INPUT = _DEFAULT["BG_INPUT"]
+BG_BUBBLE_USER = _DEFAULT["BG_BUBBLE_USER"]
+BG_BUBBLE_BOT = _DEFAULT["BG_BUBBLE_BOT"]
+BG_BUBBLE_ERROR = _DEFAULT["BG_BUBBLE_ERROR"]
+FG_PRIMARY = _DEFAULT["FG_PRIMARY"]
+FG_SECONDARY = _DEFAULT["FG_SECONDARY"]
+FG_USER = _DEFAULT["FG_USER"]
+FG_BOT = _DEFAULT["FG_BOT"]
+FG_ERROR = _DEFAULT["FG_ERROR"]
+FG_SUCCESS = _DEFAULT["FG_SUCCESS"]
+FG_PLACEHOLDER = _DEFAULT["FG_PLACEHOLDER"]
+ACCENT = _DEFAULT["ACCENT"]
+ACCENT_HOVER = _DEFAULT["ACCENT_HOVER"]
+ACCENT_CONFIRM = _DEFAULT["ACCENT_CONFIRM"]
+ACCENT_CONFIRM_HOVER = _DEFAULT["ACCENT_CONFIRM_HOVER"]
+ACCENT_CANCEL = _DEFAULT["ACCENT_CANCEL"]
+ACCENT_CANCEL_HOVER = _DEFAULT["ACCENT_CANCEL_HOVER"]
+ACCENT_CHOICE = _DEFAULT["ACCENT_CHOICE"]
+ACCENT_CHOICE_HOVER = _DEFAULT["ACCENT_CHOICE_HOVER"]
+BORDER_COLOR = _DEFAULT["BORDER_COLOR"]
+SCROLLBAR_COLOR = _DEFAULT["SCROLLBAR_COLOR"]
+SCROLLBAR_HOVER = _DEFAULT["SCROLLBAR_HOVER"]
+
+# ─── Fonts ───────────────────────────────────────────
+FONT_FAMILY = "Segoe UI"
+FONT_SIZE_NORMAL = 12
+FONT_SIZE_SMALL = 10
+FONT_SIZE_TITLE = 15
+FONT_SIZE_LABEL = 12
+
+# ─── Sizing ──────────────────────────────────────────
+BUBBLE_PADX = 16
+BUBBLE_PADY = 10
+BUBBLE_RADIUS = 14
+INPUT_HEIGHT = 44
+BUTTON_HEIGHT = 38
+ACTION_BAR_HEIGHT = 54
+CHAT_PADX = 12
+CHAT_PADY = 8

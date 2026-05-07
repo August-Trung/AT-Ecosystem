@@ -1,0 +1,12 @@
+{"text": "mở word giúp tôi", "type": "open_app", "args": {"app_name": "word"}}
+{"text": "bật trình duyệt chrome lên", "type": "open_app", "args": {"app_name": "chrome"}}
+{"text": "tài liệu kế hoạch nằm đâu rồi", "type": "find_file", "args": {"query": "kế hoạch"}}
+{"text": "kiếm file hợp đồng hôm qua", "type": "find_file", "args": {"query": "hợp đồng"}}
+{"text": "30 phút nữa nhắc tôi nghỉ mắt", "type": "create_reminder", "args": {"title": "nghỉ mắt"}, "due": {"present": true}}
+{"text": "ngày mai lúc 7h30 nhắc tôi đi khám", "type": "create_reminder", "args": {"title": "đi khám"}, "due": {"hour": 7, "minute": 30}}
+{"text": "8 giờ tối nay nhắc tôi uống thuốc", "type": "create_reminder", "args": {"title": "uống thuốc"}, "due": {"hour": 20, "minute": 0}}
+{"text": "mở youtube nhạc tập trung làm việc", "type": "youtube_search", "args": {"query": "nhạc tập trung làm việc", "browser": "default"}}
+{"text": "tra giúp tôi giá vàng hôm nay", "type": "web_search", "args": {"query": "tra giúp tôi giá vàng hôm nay"}}
+{"text": "hộp thư có gì mới không", "type": "check_email", "args": {"mode": "unread:latest"}}
+{"text": "nhắc lại sau 15 phút", "type": "snooze_reminder", "args": {"minutes": 15}}
+{"text": "hoàn thành reminder số 2", "type": "complete_reminder", "args": {"index": 2}}

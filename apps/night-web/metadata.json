@@ -1,0 +1,5 @@
+{
+  "name": "Midnight Pixel Chat",
+  "description": "A retro pixel-art anonymous chat room that only opens between 10 PM and 2 AM. Connect with random strangers in an ephemeral midnight lounge.",
+  "requestFramePermissions": []
+}

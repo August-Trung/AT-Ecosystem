@@ -1,0 +1,90 @@
+import { apiUrl, readJsonResponse } from "./apiClient";
+import { getFacebookCookie, getYouTubeCookie } from "./extractService";
+
+export const downloadMediaFile = async (
+  url: string,
+  filename: string,
+  onProgress?: (status: { progress?: number; speed?: string; phase?: string }) => void
+): Promise<void> => {
+  const downloadUrl = apiUrl(`/api/download?url=${encodeURIComponent(
+    url
+  )}&filename=${encodeURIComponent(filename)}`);
+
+  if (url.startsWith("youtube:")) {
+    const prepareResponse = await fetch(apiUrl("/api/youtube/prepare"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, filename, cookie: getYouTubeCookie() }),
+    });
+    if (!prepareResponse.ok) throw new Error("Could not prepare YouTube file");
+    const prepareData = await readJsonResponse<{ jobId: string }>(prepareResponse);
+    const jobId = prepareData.jobId;
+
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const jobResponse = await fetch(apiUrl(`/api/youtube/jobs/${jobId}`));
+      if (!jobResponse.ok) throw new Error("Could not check YouTube job");
+      const job = await readJsonResponse<{
+        status: string;
+        progress?: number;
+        speed?: string;
+        phase?: string;
+        error?: string;
+        downloadUrl?: string;
+      }>(jobResponse);
+      onProgress?.({
+        progress: job.progress,
+        speed: job.speed,
+        phase: job.phase,
+      });
+
+      if (job.status === "error") {
+        throw new Error(job.error || "Could not prepare YouTube file");
+      }
+
+      if (job.status === "ready" && job.downloadUrl) {
+        const anchor = document.createElement("a");
+        anchor.href = apiUrl(job.downloadUrl);
+        anchor.download = filename;
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        return;
+      }
+    }
+  }
+
+  const anchor = document.createElement("a");
+  const facebookCookie = getFacebookCookie();
+  if (facebookCookie && /facebook|fbcdn|fbsbx/i.test(url)) {
+    const response = await fetch(downloadUrl, {
+      headers: {
+        "x-augustdown-facebook-cookie": facebookCookie,
+      },
+    });
+    if (!response.ok) throw new Error("Could not download media");
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    window.URL.revokeObjectURL(blobUrl);
+    document.body.removeChild(anchor);
+    return;
+  }
+
+  anchor.href = downloadUrl;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+};
+
+export const getPreviewUrl = (url?: string): string => {
+  if (!url) return "/ver-bigger-logo.png";
+  if (url.startsWith("/")) return url;
+  return apiUrl(`/api/preview?url=${encodeURIComponent(url)}`);
+};

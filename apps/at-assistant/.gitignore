@@ -1,0 +1,62 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test/coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# IDE/editor
+.idea/
+.vscode/
+logs/app.log
+
+.codex-skill-build
+
+/bridge
+.codex
+
+# Local runtime data
+app_settings/reminders.json
+app_settings/bulk_email_logs
+app_settings/everything-sdk
+app_settings/drive_active_account.*
+app_settings/drive_tokens
+app_settings/gmail_active_account.*
+app_settings/gmail_tokens
+app_settings/chat_sessions
+app_settings/personal_memory.json
+app_settings/installed_apps_cache.json
+app_settings/recent_apps.json
+app_settings/workflows.json
+app_settings/nlu_feedback.jsonl
+app_settings/nlu_feedback_review.csv
+app_settings/nlu_auto_label_rejected.csv
+app_settings/nlu_regression_candidates.jsonl
+
+
+# Local docs / handoff notes
+BUG.md
+FEATURES_ARCHIVE.md
+FUNCTION_STATUS.md
+HANDOFF.md
+PROJECT_CONTROL_CENTER.md
+REAL_WORKING_FEATURES.md
+THREAD_WORKFLOW_RULE.md
+TESTCASE.csv
+src/docs/BEHAVIOR.md
+
+CLAUDE.md

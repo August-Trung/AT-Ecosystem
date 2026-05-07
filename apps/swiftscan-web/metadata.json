@@ -1,0 +1,8 @@
+
+{
+  "name": "SwiftScan Web",
+  "description": "Ứng dụng quét tài liệu hiệu suất cao trên web, cho phép chụp liên tục nhiều ảnh, sắp xếp thứ tự bằng cách kéo thả và xuất file PDF chuyên nghiệp.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

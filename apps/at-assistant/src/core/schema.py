@@ -1,0 +1,62 @@
+from typing import Any, Dict, Literal, Optional
+from pydantic import BaseModel, Field
+
+ToolName = Literal[
+    "open_app",
+    "close_app",
+    "find_file",
+    "open_file",
+    "delete_file",
+    "delete_path",
+    "copy_path",
+    "move_path",
+    "web_search",
+    "ask_clarify",
+    "hide_email",
+    "check_email",
+    "email_login",
+    "read_email",
+    "send_email",
+    "send_bulk_email",
+    "reply_email",
+    "mark_email",
+    "archive_email",
+    "drive_login",
+    "list_drive_accounts",
+    "set_drive_account",
+    "upload_to_drive",
+    "search_drive_files",
+    "get_drive_link",
+    "download_drive_file",
+    "create_reminder",
+    "import_task_list",
+    "list_reminders",
+    "complete_reminder",
+    "delete_reminder",
+    "update_reminder",
+    "snooze_reminder",
+    "set_memory",
+    "view_memory",
+    "delete_memory_key",
+    "clear_memory_history",
+    "set_entity_memory",
+    "view_entity_memory",
+    "delete_entity_memory",
+    "add_pinned_knowledge",
+    "view_pinned_knowledge",
+    "delete_pinned_knowledge",
+    "list_workflows",
+    "run_workflow",
+    "delete_workflow",
+    "system_power",
+    "schedule_close",
+    "schedule_open",
+    "clipboard_bridge",
+    "lazy_idle_guard",
+]
+
+class ToolCall(BaseModel):
+    tool: ToolName
+    args: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=0.8, ge=0, le=1)
+    note: Optional[str] = None

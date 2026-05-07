@@ -1,0 +1,8 @@
+{
+  "name": "AT Tools",
+  "description": "The ultimate GenZ toolkit for MMO work. Real tools, real results. QR, 2FA, IP, TempMail, and more.",
+  "requestFramePermissions": [
+    "camera",
+    "clipboard-read"
+  ]
+}

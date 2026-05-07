@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="stylesheet" href="style.css" />
+		<title>Space Navigator</title>
+	</head>
+	<body>
+		<div id="ui">
+			<div>Score: <span id="score">0</span></div>
+			<div>Level: <span id="level">1</span></div>
+			<div>Speed: <span id="speed">1</span>x</div>
+		</div>
+		<div id="gameOver">
+			<div>Game Over!</div>
+			<div style="font-size: 36px; margin-top: 20px">
+				Final Score: <span id="finalScore">0</span>
+			</div>
+			<div class="gameover-best">
+				Best Score: <span id="bestScore">0</span>
+			</div>
+			<div id="gameOverLeaderboard" class="leaderboard-panel"></div>
+			<button id="restartButton" class="btn btn-accent">
+				Play Again
+			</button>
+		</div>
+		<div id="stageClear">
+			<div class="stage-clear-title">Stage Clear!</div>
+			<div class="stage-clear-meta" id="stageClearMeta"></div>
+			<div class="stage-clear-actions">
+				<button id="nextStageButton" class="btn btn-primary">
+					Next Stage
+				</button>
+				<button id="stageHomeButton" class="btn btn-accent">
+					Back to Start
+				</button>
+			</div>
+		</div>
+		<div id="pauseMenu">
+			<div class="pause-title">Paused</div>
+			<div class="pause-buttons">
+				<button id="resumeButton" class="btn btn-primary">
+					Resume
+				</button>
+				<button id="homeButton" class="btn btn-accent">Home</button>
+			</div>
+		</div>
+		<div id="levelUp">LEVEL UP!</div>
+		<div id="warpEffect"></div>
+		<div id="startScreen">
+			<h1>SPACE NAVIGATOR</h1>
+			<p>
+				Navigate your spacecraft through treacherous asteroid fields in
+				the depths of space! Avoid collisions and collect power-ups to
+				increase your score.
+			</p>
+			<p>
+				As you progress, the speed increases and dangers multiply. How
+				far can you go?
+			</p>
+			<p>
+				Controls: Mouse or touch drag to steer. Arrow keys steer on
+				keyboard.
+			</p>
+			<div id="levelBadge">Selected: Level 1</div>
+			<div class="button-container">
+				<button
+					id="customizeShipButton"
+					class="btn btn-accent btn-xl"
+				>
+					CUSTOMIZE SHIP
+				</button>
+				<button id="levelSelectButton" class="btn btn-primary btn-xl">
+					LEVEL SELECT
+				</button>
+				<button id="startButton" class="btn btn-primary btn-xl">
+					START JOURNEY
+				</button>
+			</div>
+			<div id="leaderboardPanel" class="leaderboard-panel"></div>
+		</div>
+		<div id="levelSelect">
+			<div class="level-select-card">
+				<div class="level-select-header">
+					<h2>Choose Your Stage</h2>
+					<button id="closeLevelSelect" class="btn btn-danger">
+						Close
+					</button>
+				</div>
+				<div id="levelOptions" class="level-options"></div>
+			</div>
+		</div>
+		<div id="gachaResults" class="gacha-results">
+			<div class="gacha-results-card">
+				<div class="gacha-results-title">Pack Results</div>
+				<ul class="gacha-results-list"></ul>
+				<div class="gacha-results-bonus">Bonus: none</div>
+				<button class="btn btn-primary gacha-results-close">
+					Close
+				</button>
+			</div>
+		</div>
+
+		<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+		<script type="module" src="./script.js"></script>
+	</body>
+</html>
