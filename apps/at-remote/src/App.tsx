@@ -8,6 +8,7 @@ import {
   Hash,
   KeyRound,
   Mail,
+  Menu,
   MonitorSmartphone,
   QrCode,
   RefreshCw,
@@ -204,12 +205,39 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastCommand, setLastCommand] = useState("");
+  const [showQuickActions, setShowQuickActions] = useState(true);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const activeBaseUrl = connection?.baseUrl || baseUrl;
   const statusTone =
     connectionText === "Mất kết nối" ? "lost" : connectionText === "Đã kết nối" ? "ready" : "neutral";
+
+  const enterConnected = useCallback((saved: SavedConnection) => {
+    saveConnection(saved);
+    setConnection(saved);
+    setPairRequestId("");
+    setStep("connected");
+    setConnectionText("Đã kết nối");
+    setMessages((current) =>
+      current.length
+        ? current
+        : [
+            {
+              id: newId(),
+              role: "assistant",
+              text: "Đã kết nối với ATAssistant.",
+              cards: [
+                {
+                  type: "message",
+                  title: "Đã kết nối",
+                  message: "Bạn có thể nhập yêu cầu hoặc dùng các nút nhanh."
+                }
+              ]
+            }
+          ]
+    );
+  }, []);
 
   const checkHealth = useCallback(async () => {
     if (!activeBaseUrl.trim()) {
@@ -248,25 +276,11 @@ function App() {
         );
         const data = response.data;
         if (data.status === "approved" && data.authKey) {
-          const saved = { baseUrl, authKey: data.authKey as string, deviceName };
-          saveConnection(saved);
-          setConnection(saved);
-          setStep("connected");
-          setConnectionText("Đã kết nối");
-          setMessages([
-            {
-              id: newId(),
-              role: "assistant",
-              text: "Đã kết nối với ATAssistant.",
-              cards: [
-                {
-                  type: "message",
-                  title: "Đã kết nối",
-                  message: "Bạn có thể nhập yêu cầu hoặc dùng các nút nhanh."
-                }
-              ]
-            }
-          ]);
+          enterConnected({
+            baseUrl: normalizeBaseUrl(baseUrl),
+            authKey: data.authKey as string,
+            deviceName: deviceName.trim() || "Điện thoại"
+          });
         }
         if (data.status === "rejected") {
           setStep("connect");
@@ -277,10 +291,11 @@ function App() {
       }
     }, 1400);
     return () => window.clearInterval(id);
-  }, [baseUrl, deviceName, pairRequestId, step]);
+  }, [baseUrl, deviceName, enterConnected, pairRequestId, step]);
 
   const submitPair = async (event?: FormEvent) => {
     event?.preventDefault();
+    if (busy || step === "pending") return;
     const cleanBase = normalizeBaseUrl(baseUrl);
     setBaseUrl(cleanBase);
     if (!/^https?:\/\/[^/]+/i.test(cleanBase)) {
@@ -298,6 +313,15 @@ function App() {
       });
       const data = response.data;
       if (!response.ok || !data.ok) throw new Error(String(data.message || friendlyFetchError()));
+      if (data.status === "approved" && typeof data.authKey === "string" && data.authKey) {
+        enterConnected({
+          baseUrl: cleanBase,
+          authKey: data.authKey,
+          deviceName: deviceName.trim() || "Điện thoại"
+        });
+        return;
+      }
+      if (!data.requestId) throw new Error("Máy tính chưa nhận được yêu cầu kết nối.");
       setPairRequestId(String(data.requestId || ""));
       setStep("pending");
       setConnectionText("Đang chờ xác nhận trên ATAssistant");
@@ -384,7 +408,7 @@ function App() {
 
   const quickActions = useMemo<QuickAction[]>(
     () => [
-      { label: "Email tạm", icon: Mail, command: "mo temp mail" },
+      { label: "Email tạm", icon: Mail, command: "mở temp mail" },
       { label: "Tạo QR", icon: QrCode, prefix: "tạo qr ", suffix: " trong mmo" },
       { label: "Tạo mật khẩu", icon: KeyRound, command: "tạo mật khẩu trong mmo" },
       { label: "Hash text", icon: Hash, prefix: "hash sha256 ", suffix: " trong mmo" },
@@ -394,6 +418,7 @@ function App() {
   );
 
   const runQuickAction = (action: QuickAction) => {
+    setShowQuickActions(false);
     if ("command" in action && action.command) {
       void sendCommand(action.command);
       return;
@@ -501,7 +526,7 @@ function App() {
         </button>
       </header>
 
-      <section className="quick-actions" aria-label="Nút nhanh">
+      <section className={`quick-actions ${showQuickActions ? "open" : "closed"}`} aria-label="Nút nhanh">
         {quickActions.map((action) => {
           const Icon = action.icon;
           return (
@@ -547,8 +572,16 @@ function App() {
       </section>
 
       <form className="composer" onSubmit={onSubmitCommand}>
-        <button type="button" className="icon-button" onClick={() => setDraft("")} aria-label="Xóa nội dung">
-          <X size={18} />
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => {
+            if (draft.trim()) setDraft("");
+            else setShowQuickActions((value) => !value);
+          }}
+          aria-label={draft.trim() ? "Xóa nội dung" : "Nút nhanh"}
+        >
+          {draft.trim() ? <X size={18} /> : <Menu size={19} />}
         </button>
         <textarea
           ref={inputRef}

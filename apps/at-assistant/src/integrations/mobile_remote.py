@@ -55,6 +55,18 @@ def _public_device(device: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pair_identity(device_name: str, client_host: str) -> tuple[str, str]:
+    return (str(device_name or "").strip().casefold(), str(client_host or "").strip())
+
+
+def _request_response(request: "PairRequest", *, include_key: bool = False) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "requestId": request.id,
+        **request.to_public(include_key=include_key),
+    }
+
+
 def _monorepo_root() -> Path | None:
     current = Path(__file__).resolve()
     for parent in current.parents:
@@ -299,14 +311,36 @@ class MobileRemoteBridge:
             if not hmac.compare_digest(str(pair_code or "").strip(), self._pair_code):
                 return {"ok": False, "status": "invalid_code", "message": "Mã kết nối không đúng."}
             name = str(device_name or "").strip()[:80] or "Điện thoại"
+            client = str(client_host or "").strip()
+            identity = _pair_identity(name, client)
+            for request in self._pending.values():
+                if _pair_identity(request.device_name, request.client_host) != identity:
+                    continue
+                if request.status == "pending":
+                    return {
+                        **_request_response(request),
+                        "status": "pending",
+                        "message": request.message or "Đang chờ xác nhận trên ATAssistant.",
+                    }
+                if request.status == "approved" and request.auth_key:
+                    return {
+                        **_request_response(request, include_key=True),
+                        "status": "approved",
+                        "message": request.message or "Đã kết nối.",
+                    }
             request = PairRequest(
                 id=secrets.token_urlsafe(12),
                 device_name=name,
-                client_host=str(client_host or "").strip(),
+                client_host=client,
+                message="Đang chờ xác nhận trên ATAssistant.",
             )
             self._pending[request.id] = request
         self._emit("pair_requested", request.to_public())
-        return {"ok": True, "status": "pending", "requestId": request.id, "message": "Đang chờ xác nhận trên ATAssistant."}
+        return {
+            **_request_response(request),
+            "status": "pending",
+            "message": "Đang chờ xác nhận trên ATAssistant.",
+        }
 
     def pair_status(self, request_id: str) -> dict[str, Any]:
         with self._lock:
@@ -332,6 +366,12 @@ class MobileRemoteBridge:
             }
             self._settings = self.settings_store.load()
             devices = list(self._settings.get("paired_devices") or [])
+            request_name = request.device_name.strip().casefold()
+            devices = [
+                item
+                for item in devices
+                if str(item.get("name") or "").strip().casefold() != request_name
+            ]
             devices.append(device)
             self._settings["paired_devices"] = devices
             self.settings_store.save(self._settings)
@@ -339,6 +379,12 @@ class MobileRemoteBridge:
             request.device_id = device["id"]
             request.auth_key = auth_key
             request.message = "Đã kết nối."
+            identity = _pair_identity(request.device_name, request.client_host)
+            for pending_id, pending in list(self._pending.items()):
+                if pending_id == request_id:
+                    continue
+                if _pair_identity(pending.device_name, pending.client_host) == identity:
+                    self._pending.pop(pending_id, None)
             public = _public_device(device)
         self._emit("pair_approved", public)
         return {"ok": True, "device": public}
@@ -375,12 +421,22 @@ class MobileRemoteBridge:
                 "cards": [{"type": "error", "title": "Mất kết nối", "message": "Hãy kết nối lại với ATAssistant."}],
                 "buttons": [{"label": "Thử lại", "command": "__retry__"}],
             }
-        text = str(command or "").strip()
+        raw_text = str(command or "").strip()
+        text = _strip_mobile_command_prefix(raw_text)
         if not text:
             return mobile_payload_from_result(ActionResult.err("Bạn chưa nhập yêu cầu.", code=ErrorCode.UNKNOWN))
         if len(text) > MAX_COMMAND_LENGTH:
             return mobile_payload_from_result(ActionResult.err("Yêu cầu quá dài.", code=ErrorCode.UNKNOWN))
 
+        public_device = _public_device(device)
+        self._emit(
+            "command_received",
+            {
+                "device": public_device,
+                "command": text,
+                "displayCommand": raw_text or text,
+            },
+        )
         with self._engine_lock:
             try:
                 result = self.engine.handle_turn(text, source="mobile")
@@ -389,8 +445,17 @@ class MobileRemoteBridge:
             except Exception as exc:
                 result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
         payload = mobile_payload_from_result(result)
-        payload["device"] = _public_device(device)
-        self._emit("command", {"device": _public_device(device), "command": text, "status": payload.get("status")})
+        payload["device"] = public_device
+        event_payload = {
+            "device": public_device,
+            "command": text,
+            "displayCommand": raw_text or text,
+            "status": payload.get("status"),
+            "result": result,
+            "payload": payload,
+        }
+        self._emit("command_result", event_payload)
+        self._emit("command", event_payload)
         return payload
 
     def _authenticate(self, auth_key: str) -> dict[str, Any] | None:
@@ -549,6 +614,70 @@ class MobileRemoteBridge:
         return f"{secrets.randbelow(900000) + 100000}"
 
 
+_MOBILE_TEXT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("Ban muon tao QR cho noi dung gi?", "Bạn muốn tạo QR cho nội dung gì?"),
+    ("Gui vi du: tao qr https://example.com trong mmo", "Gửi ví dụ: tạo qr https://example.com trong mmo"),
+    ("Ban muon format JSON/XML nao?", "Bạn muốn format JSON/XML nào?"),
+    ('Gui vi du: format json {"a":1} trong mmo', 'Gửi ví dụ: format json {"a":1} trong mmo'),
+    ("Can van ban de phan tich.", "Cần văn bản để phân tích."),
+    ("Vi du: readability Noi dung... trong mmo", "Ví dụ: readability Nội dung... trong mmo"),
+    ("Da tao email tam:", "Đã tạo email tạm:"),
+    ("Email tam hien tai:", "Email tạm hiện tại:"),
+    (
+        "Mailbox nay do ATAssistant quan ly cho Telegram. Web TempMail dung session rieng nen co the khac.",
+        "Email tạm này do ATAssistant quản lý, giống luồng Telegram hiện tại.",
+    ),
+    ("Inbox hien chua co mail.", "Inbox hiện chưa có mail."),
+    ("Inbox co ", "Inbox có "),
+    ("Chua chon duoc email can doc.", "Chưa chọn được email cần đọc."),
+    ("Khong tao duoc QR:", "Không tạo được QR:"),
+    ("Da tao QR cho:", "Đã tạo QR cho:"),
+    ("JSON/XML khong hop le:", "JSON/XML không hợp lệ:"),
+    ("JSON da format", "JSON đã format"),
+    ("JSON da minify", "JSON đã minify"),
+    ("JSON string da parse", "JSON string đã parse"),
+    ("XML da format", "XML đã format"),
+)
+
+
+def _mobile_text(value: Any) -> str:
+    text = str(value or "")
+    for before, after in _MOBILE_TEXT_REPLACEMENTS:
+        text = text.replace(before, after)
+    return text
+
+
+def _strip_mobile_command_prefix(command: str) -> str:
+    text = str(command or "").strip()
+    if text.casefold().startswith("/at"):
+        return text[3:].strip()
+    return text
+
+
+def _mobile_command_text(command: str) -> str:
+    text = str(command or "").strip()
+    lowered = text.casefold()
+    if lowered == "mo temp mail":
+        return "mở temp mail"
+    if lowered == "tao temp mail moi":
+        return "tạo temp mail mới"
+    if lowered.startswith("doc temp mail so "):
+        return "đọc temp mail số " + text[len("doc temp mail so ") :].strip()
+    return _mobile_text(text)
+
+
+def _mobile_button_label(label: str) -> str:
+    text = str(label or "").strip()
+    lowered = text.casefold()
+    if lowered == "refresh inbox":
+        return "Làm mới"
+    if lowered == "new address":
+        return "Tạo email mới"
+    if lowered.startswith("read "):
+        return "Đọc " + text[5:].strip()
+    return _mobile_text(text)
+
+
 def mobile_payload_from_result(result: ActionResult) -> dict[str, Any]:
     cards = _cards_from_result(result)
     buttons = _buttons_from_result(result)
@@ -580,8 +709,8 @@ def _friendly_message(result: ActionResult) -> str:
     if data.get("hex") or data.get("base64"):
         return "Đã tạo hash."
     if result.status == ActionStatus.ERROR:
-        return result.message or "Không xử lý được yêu cầu."
-    return result.message or "Đã xong."
+        return _mobile_text(result.message) or "Không xử lý được yêu cầu."
+    return _mobile_text(result.message) or "Đã xong."
 
 
 def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
@@ -606,13 +735,13 @@ def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
             {
                 "type": "question",
                 "title": "Cần thêm thông tin",
-                "message": str(data.get("question") or result.message or ""),
+                "message": _mobile_text(data.get("question") or result.message or ""),
             }
         ]
 
     if result.status == ActionStatus.NEED_CHOICE:
         choices = [str(item) for item in list(data.get("choices") or [])]
-        return [{"type": "choice", "title": "Chọn một mục", "message": result.message, "choices": choices}]
+        return [{"type": "choice", "title": "Chọn một mục", "message": _mobile_text(result.message), "choices": choices}]
 
     image_card = _image_card_from_data(data, result.message)
     if image_card:
@@ -641,7 +770,7 @@ def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
                     {"label": "Pin", "value": _percent(data.get("battery_percent")) if data.get("battery_percent") is not None else "Không có thông tin"},
                     {"label": "Đang dùng", "value": str(data.get("foreground_window") or "Không rõ")},
                 ],
-                "message": result.message,
+                "message": _mobile_text(result.message),
             }
         )
 
@@ -656,7 +785,7 @@ def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
                 "type": "copy",
                 "title": f"Hash {str(data.get('algorithm') or '').upper()}".strip(),
                 "items": items,
-                "message": result.message,
+                "message": _mobile_text(result.message),
             }
         )
 
@@ -675,10 +804,10 @@ def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
         if data.get(key)
     ]
     if copy_items and not any(card.get("type") == "copy" for card in cards):
-        cards.append({"type": "copy", "title": "Kết quả", "items": copy_items, "message": result.message})
+        cards.append({"type": "copy", "title": "Kết quả", "items": copy_items, "message": _mobile_text(result.message)})
 
     if not cards:
-        cards.append({"type": "message", "title": "Kết quả", "message": result.message})
+        cards.append({"type": "message", "title": "Kết quả", "message": _mobile_text(result.message)})
     return cards
 
 
@@ -697,14 +826,14 @@ def _buttons_from_result(result: ActionResult) -> list[dict[str, Any]]:
     buttons: list[dict[str, Any]] = []
     if data.get("mailbox_address"):
         return [
-            {"label": "Làm mới", "command": "mo temp mail", "tone": "neutral"},
-            {"label": "Tạo email mới", "command": "tao temp mail moi", "tone": "neutral"},
+            {"label": "Làm mới", "command": "mở temp mail", "tone": "neutral"},
+            {"label": "Tạo email mới", "command": "tạo temp mail mới", "tone": "neutral"},
         ]
     for item in list(data.get("telegram_command_buttons") or [])[:8]:
         if not isinstance(item, dict):
             continue
-        label = str(item.get("text") or "").strip()
-        command = str(item.get("command") or "").strip()
+        label = _mobile_button_label(str(item.get("text") or "").strip())
+        command = _mobile_command_text(str(item.get("command") or "").strip())
         if label and command:
             buttons.append({"label": label, "command": command, "tone": "neutral"})
     for item in list(data.get("mobile_buttons") or [])[:4]:
@@ -734,7 +863,7 @@ def _image_card_from_data(data: dict[str, Any], message: str) -> dict[str, Any] 
     return {
         "type": "image",
         "title": "Ảnh kết quả",
-        "message": message,
+        "message": _mobile_text(message),
         "image": {
             "src": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
             "alt": "Kết quả",

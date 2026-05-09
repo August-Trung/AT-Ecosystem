@@ -2163,6 +2163,41 @@ class ATAssistantApp(ctk.CTk):
                 self.chat.add_system_message(
                     f"Đã kết nối điện thoại: {payload.get('name') or 'Thiết bị'}."
                 )
+            elif event == "command_received":
+                command = str(payload.get("displayCommand") or payload.get("command") or "").strip()
+                if command:
+                    self._ensure_active_chat_session()
+                    self.chat.add_user_message(command)
+                    self._persist_current_chat_session()
+                    self._reload_chat_session_list()
+            elif event == "command_result":
+                result = payload.get("result")
+                if isinstance(result, ActionResult):
+                    self._ensure_active_chat_session()
+                    message = str(result.message or "")
+                    if isinstance(result.data, dict):
+                        if result.status == ActionStatus.NEED_CLARIFY:
+                            question = str(result.data.get("question") or "").strip()
+                            if question and question != message:
+                                message = f"{message}\n\n{question}" if message else question
+                        elif result.status == ActionStatus.NEED_CONFIRM:
+                            message = f"{message}\n\nXác nhận trên điện thoại bằng Đồng ý hoặc Hủy."
+                        elif result.status == ActionStatus.NEED_CHOICE:
+                            choices = list(result.data.get("choices") or [])
+                            if choices:
+                                lines = [f"{index}. {item}" for index, item in enumerate(choices, start=1)]
+                                message = f"{message}\n\n" + "\n".join(lines)
+                            message = f"{message}\n\nChọn trên điện thoại hoặc nhập số tương ứng."
+                    message = self._sanitize_user_message(message)
+                    if result.status == ActionStatus.ERROR:
+                        self.chat.add_bot_message(message, style="error")
+                    elif result.status == ActionStatus.SUCCESS:
+                        self.chat.add_bot_message(message, style="success")
+                    else:
+                        self.chat.add_bot_message(message)
+                    self._show_email_data(result)
+                    self._persist_current_chat_session()
+                    self._reload_chat_session_list()
 
         self._safe_after(0, append)
 

@@ -80,6 +80,64 @@ def test_mobile_remote_rejects_unpaired_command(tmp_path, monkeypatch):
     assert payload["cards"][0]["type"] == "error"
 
 
+def test_mobile_remote_deduplicates_pair_requests(tmp_path, monkeypatch):
+    events: list[tuple[str, dict]] = []
+    bridge = MobileRemoteBridge(
+        _FakeEngine(),
+        settings_store=_store(tmp_path, monkeypatch),
+        on_event=lambda event, payload: events.append((event, payload)),
+    )
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        first = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        second = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+
+        assert first["status"] == "pending"
+        assert second["status"] == "pending"
+        assert second["requestId"] == first["requestId"]
+        assert len(bridge.snapshot()["pending"]) == 1
+        assert [event for event, _payload in events].count("pair_requested") == 1
+
+        approved = bridge.approve_pair_request(first["requestId"])
+        assert approved["ok"] is True
+
+        third = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        assert third["status"] == "approved"
+        assert third["requestId"] == first["requestId"]
+        assert third["authKey"]
+        assert len(bridge.snapshot()["devices"]) == 1
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path, monkeypatch):
+    engine = _FakeEngine()
+    events: list[tuple[str, dict]] = []
+    bridge = MobileRemoteBridge(
+        engine,
+        settings_store=_store(tmp_path, monkeypatch),
+        on_event=lambda event, payload: events.append((event, payload)),
+    )
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        status = bridge.pair_status(pair["requestId"])
+
+        payload = bridge.handle_command(str(status["authKey"]), "/at trạng thái máy")
+
+        assert payload["status"] == "success"
+        assert engine.calls == [("trạng thái máy", "mobile")]
+        received = [payload for event, payload in events if event == "command_received"]
+        results = [payload for event, payload in events if event == "command_result"]
+        assert received[-1]["displayCommand"] == "/at trạng thái máy"
+        assert received[-1]["command"] == "trạng thái máy"
+        assert results[-1]["status"] == "success"
+        assert results[-1]["result"].message == "Trạng thái máy"
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_confirmation_payload_has_phone_buttons():
     payload = mobile_payload_from_result(ActionResult.need_confirm("Bạn có chắc muốn tắt máy?", "system_power", {"action": "shutdown"}))
 

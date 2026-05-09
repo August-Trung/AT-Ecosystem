@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import webbrowser
 
@@ -48,6 +49,9 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self._on_changed = on_changed
         self._store = MobileRemoteSettingsStore()
         self._qr_image = None
+        self._last_qr_url = ""
+        self._last_pending_signature = ""
+        self._last_devices_signature = ""
 
         settings = self._store.load()
         ui = self._palette
@@ -314,9 +318,22 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             self.status_var.set(f"{ready} Điện thoại và máy tính cần cùng WiFi.")
         else:
             self.status_var.set("Đang tắt. Bật kết nối điện thoại để ghép nối thiết bị.")
-        self._render_qr(str(urls[0] if urls else ""))
-        self._render_pending(list(snapshot.get("pending") or []))
-        self._render_devices(list(snapshot.get("devices") or []))
+        qr_url = str(urls[0] if urls else "")
+        if qr_url != self._last_qr_url:
+            self._last_qr_url = qr_url
+            self._render_qr(qr_url)
+
+        pending = list(snapshot.get("pending") or [])
+        pending_signature = json.dumps(pending, ensure_ascii=False, sort_keys=True)
+        if pending_signature != self._last_pending_signature:
+            self._last_pending_signature = pending_signature
+            self._render_pending(pending)
+
+        devices = list(snapshot.get("devices") or [])
+        devices_signature = json.dumps(devices, ensure_ascii=False, sort_keys=True)
+        if devices_signature != self._last_devices_signature:
+            self._last_devices_signature = devices_signature
+            self._render_devices(devices)
 
     def _render_qr(self, url: str) -> None:
         if not url:
