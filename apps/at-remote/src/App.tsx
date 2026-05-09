@@ -8,7 +8,6 @@ import {
   KeyRound,
   Mail,
   MonitorSmartphone,
-  Plus,
   QrCode,
   RefreshCw,
   Send,
@@ -78,11 +77,28 @@ const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
 
+const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+const currentLanBaseUrl = () => {
+  if (!["http:", "https:"].includes(window.location.protocol)) return "";
+  const host = window.location.hostname;
+  if (!host) return "";
+  const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+  return `${protocol}//${host}:8765`;
+};
+
 const defaultBaseUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  const explicitBase = params.get("base") || params.get("baseUrl");
+  if (explicitBase) return normalizeBaseUrl(explicitBase);
+
+  const lanBase = currentLanBaseUrl();
+  if (params.has("code") && lanBase) return lanBase;
+  if (lanBase && window.location.port === "8765") return lanBase;
+
   const saved = localStorage.getItem(LAST_ADDRESS_KEY);
   if (saved) return saved;
-  const port = window.location.port === "8765" ? window.location.port : "8765";
-  return `${window.location.protocol}//${window.location.hostname}:${port}`;
+  return lanBase;
 };
 
 const friendlyFetchError = () =>
@@ -127,8 +143,15 @@ function App() {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const activeBaseUrl = connection?.baseUrl || baseUrl;
+  const statusTone =
+    connectionText === "Mất kết nối" ? "lost" : connectionText === "Đã kết nối" ? "ready" : "neutral";
 
   const checkHealth = useCallback(async () => {
+    if (!activeBaseUrl.trim()) {
+      setConnectionText(connection ? "Mất kết nối" : "Kết nối với máy tính");
+      setStep(connection ? "connected" : "connect");
+      return;
+    }
     try {
       const response = await fetch(`${activeBaseUrl}/api/health`, { cache: "no-store" });
       if (!response.ok) throw new Error("offline");
@@ -194,8 +217,13 @@ function App() {
 
   const submitPair = async (event?: FormEvent) => {
     event?.preventDefault();
-    const cleanBase = baseUrl.trim().replace(/\/+$/, "");
+    const cleanBase = normalizeBaseUrl(baseUrl);
     setBaseUrl(cleanBase);
+    if (!/^https?:\/\/[^/]+/i.test(cleanBase)) {
+      setConnectionText("Nhập đúng địa chỉ hiển thị trên ATAssistant.");
+      setStep("connect");
+      return;
+    }
     localStorage.setItem(LAST_ADDRESS_KEY, cleanBase);
     localStorage.setItem(DEVICE_NAME_KEY, deviceName.trim() || "Điện thoại");
     setBusy(true);
@@ -323,15 +351,23 @@ function App() {
     return (
       <main className="connect-page">
         <section className="connect-card">
-          <div className="brand-mark">
-            <MonitorSmartphone size={34} />
+          <div className="connect-top">
+            <div className="brand-lockup">
+              <div className="brand-mark">
+                <span>AT</span>
+                <MonitorSmartphone size={20} />
+              </div>
+              <div>
+                <p className="eyebrow">AT Remote</p>
+                <h1>Kết nối điện thoại</h1>
+              </div>
+            </div>
+            <div className={`status-pill ${statusTone}`}>
+              {connectionText === "Mất kết nối" ? <WifiOff size={16} /> : <ShieldCheck size={16} />}
+              <span>{connectionText}</span>
+            </div>
           </div>
-          <h1>AT Remote</h1>
-          <p className="lead">Kết nối với máy tính</p>
-          <div className={`status-pill ${connectionText === "Mất kết nối" ? "lost" : ""}`}>
-            {connectionText === "Mất kết nối" ? <WifiOff size={16} /> : <ShieldCheck size={16} />}
-            <span>{connectionText}</span>
-          </div>
+          <p className="lead">Nhập đúng địa chỉ và mã đang hiển thị trong ATAssistant trên máy tính.</p>
 
           {step === "pending" ? (
             <div className="waiting-panel">
@@ -350,7 +386,13 @@ function App() {
               </label>
               <label>
                 Địa chỉ kết nối
-                <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} inputMode="url" />
+                <input
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
+                  inputMode="url"
+                  placeholder="http://192.168.1.11:8765"
+                />
+                <span className="field-hint">Dùng đúng địa chỉ nằm dưới mã kết nối trên ATAssistant.</span>
               </label>
               <label>
                 Mã kết nối
@@ -362,7 +404,7 @@ function App() {
                   placeholder="Nhập mã trên ATAssistant"
                 />
               </label>
-              <button className="primary-button" disabled={busy || !pairCode.trim()}>
+              <button className="primary-button" disabled={busy || !baseUrl.trim() || !pairCode.trim()}>
                 {busy ? <RefreshCw className="spin" size={18} /> : <ChevronRight size={18} />}
                 Kết nối với máy tính
               </button>
@@ -370,10 +412,9 @@ function App() {
           )}
 
           <div className="hint-list">
-            <p>Quét mã trên ATAssistant hoặc nhập mã kết nối.</p>
-            <p>Điện thoại và máy tính cần cùng WiFi cho bản đầu tiên.</p>
-            <p>Máy tính chưa bật ATAssistant thì điện thoại sẽ báo mất kết nối.</p>
-            <p>Trên Android, chọn thêm vào màn hình chính để mở như app.</p>
+            <div><span>1</span><p>Mở ATAssistant và bật Kết nối điện thoại.</p></div>
+            <div><span>2</span><p>Điện thoại và máy tính cần cùng WiFi cho bản đầu tiên.</p></div>
+            <div><span>3</span><p>Nếu báo mất kết nối, kiểm tra lại địa chỉ đang nhập.</p></div>
           </div>
         </section>
       </main>
@@ -383,11 +424,16 @@ function App() {
   return (
     <main className="app-shell">
       <header className="top-bar">
-        <div>
-          <p className="eyebrow">AT Remote</p>
-          <h1>Kết quả</h1>
+        <div className="top-brand">
+          <div className="brand-mark small">
+            <span>AT</span>
+          </div>
+          <div>
+            <p className="eyebrow">AT Remote</p>
+            <h1>Kết quả</h1>
+          </div>
         </div>
-        <button className={`connection-badge ${connectionText === "Mất kết nối" ? "lost" : ""}`} onClick={checkHealth}>
+        <button className={`connection-badge ${statusTone}`} onClick={checkHealth}>
           {connectionText === "Mất kết nối" ? <WifiOff size={16} /> : <Check size={16} />}
           {connectionText === "Mất kết nối" ? "Mất kết nối" : "Đã kết nối"}
         </button>

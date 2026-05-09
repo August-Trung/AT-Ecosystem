@@ -1,6 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="28" fill="#0f172a"/>
-  <path d="M33 33h62a10 10 0 0 1 10 10v42a10 10 0 0 1-10 10H33a10 10 0 0 1-10-10V43a10 10 0 0 1 10-10Z" fill="#f8fafc"/>
-  <path d="M42 49h44M42 64h28M42 79h36" stroke="#0f766e" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="91" cy="77" r="14" fill="#f97316"/>
+  <defs>
+    <linearGradient id="brand" x1="18" y1="18" x2="110" y2="110" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0f8f83"/>
+      <stop offset="1" stop-color="#2f6fed"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#brand)"/>
+  <path d="M28 39a11 11 0 0 1 11-11h42a11 11 0 0 1 11 11v30a11 11 0 0 1-11 11H39a11 11 0 0 1-11-11V39Z" fill="#ffffff"/>
+  <path d="M40 46h38M40 58h27M40 70h32" stroke="#0f8f83" stroke-width="7" stroke-linecap="round"/>
+  <rect x="75" y="60" width="28" height="42" rx="8" fill="#e9f6f5" stroke="#ffffff" stroke-width="6"/>
+  <circle cx="89" cy="93" r="3" fill="#2f6fed"/>
+  <path d="M28 102 43 28h13l15 74H59l-3-18H42l-3 18H28Zm17-30h9l-4-25h-1l-4 25Zm30 30V39H60V28h43v11H88v63H75Z" fill="#ffffff" opacity=".94"/>
 </svg>

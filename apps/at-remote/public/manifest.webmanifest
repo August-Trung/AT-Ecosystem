@@ -3,8 +3,8 @@
   "short_name": "AT Remote",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#0f172a",
+  "background_color": "#f6f8fb",
+  "theme_color": "#0f8f83",
   "icons": [
     {
       "src": "/icon.svg",

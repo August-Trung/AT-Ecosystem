@@ -9,6 +9,28 @@ from src.gui.theme import FONT_FAMILY, FONT_SIZE_NORMAL, FONT_SIZE_SMALL, FONT_S
 from src.integrations.mobile_remote import DEFAULT_REMOTE_PORT, MobileRemoteBridge, MobileRemoteSettingsStore
 
 
+REMOTE_PALETTE = {
+    "BG_PRIMARY": "#f6f8fb",
+    "BG_SECONDARY": "#ffffff",
+    "BG_INPUT": "#f9fbfd",
+    "CARD_SOFT": "#edf8f6",
+    "CARD_BLUE": "#eef4ff",
+    "FG_PRIMARY": "#172033",
+    "FG_SECONDARY": "#5f6f86",
+    "FG_SUCCESS": "#087443",
+    "FG_ERROR": "#a2163b",
+    "ACCENT": "#0f8f83",
+    "ACCENT_HOVER": "#0b746b",
+    "ACCENT_BLUE": "#2f6fed",
+    "ACCENT_BLUE_HOVER": "#2658be",
+    "ACCENT_CANCEL": "#fff1f3",
+    "ACCENT_CANCEL_HOVER": "#ffdce4",
+    "ACCENT_CHOICE": "#e8eef5",
+    "ACCENT_CHOICE_HOVER": "#d9e3ee",
+    "BORDER_COLOR": "#d9e3ee",
+}
+
+
 class MobileRemoteDialog(ctk.CTkToplevel):
     def __init__(
         self,
@@ -20,7 +42,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         on_changed=None,
     ) -> None:
         super().__init__(master)
-        self._palette = palette
+        self._palette = {**palette, **REMOTE_PALETTE}
         self._bridge = bridge
         self._on_message = on_message
         self._on_changed = on_changed
@@ -28,10 +50,11 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self._qr_image = None
 
         settings = self._store.load()
+        ui = self._palette
         self.title("Kết nối điện thoại")
-        self.geometry("760x720")
-        self.minsize(680, 620)
-        self.configure(fg_color=palette["BG_PRIMARY"])
+        self.geometry("860x680")
+        self.minsize(760, 590)
+        self.configure(fg_color=ui["BG_PRIMARY"])
         self.transient(master)
         self.grab_set()
 
@@ -41,141 +64,187 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self.code_var = ctk.StringVar(value="")
         self.url_var = ctk.StringVar(value="")
 
-        shell = ctk.CTkFrame(self, fg_color=palette["BG_SECONDARY"], corner_radius=14)
+        shell = ctk.CTkFrame(self, fg_color=ui["BG_PRIMARY"], corner_radius=0)
         shell.pack(fill="both", expand=True, padx=18, pady=18)
         shell.grid_columnconfigure(0, weight=1)
+        shell.grid_rowconfigure(5, weight=1)
 
+        header = ctk.CTkFrame(shell, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.grid_columnconfigure(1, weight=1)
+
+        mark = ctk.CTkFrame(header, width=52, height=52, fg_color=ui["ACCENT"], corner_radius=8)
+        mark.grid(row=0, column=0, sticky="nw", padx=(0, 12))
+        mark.grid_propagate(False)
         ctk.CTkLabel(
-            shell,
+            mark,
+            text="AT",
+            font=(FONT_FAMILY, 18, "bold"),
+            text_color="#ffffff",
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        title_box = ctk.CTkFrame(header, fg_color="transparent")
+        title_box.grid(row=0, column=1, sticky="ew")
+        ctk.CTkLabel(
+            title_box,
             text="Kết nối điện thoại",
-            font=(FONT_FAMILY, FONT_SIZE_TITLE + 1, "bold"),
-            text_color=palette["FG_PRIMARY"],
+            font=(FONT_FAMILY, FONT_SIZE_TITLE + 5, "bold"),
+            text_color=ui["FG_PRIMARY"],
             anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 6))
-
+        ).pack(fill="x")
         ctk.CTkLabel(
-            shell,
-            text=(
-                "Bật chế độ này để AT Remote trên điện thoại gửi yêu cầu về ATAssistant. "
-                "Điện thoại và máy tính cần cùng WiFi cho bản đầu tiên."
-            ),
+            title_box,
+            text="Cho phép AT Remote gửi yêu cầu về ATAssistant khi điện thoại và máy tính cùng WiFi.",
             font=(FONT_FAMILY, FONT_SIZE_NORMAL),
-            text_color=palette["FG_SECONDARY"],
+            text_color=ui["FG_SECONDARY"],
             anchor="w",
             justify="left",
-            wraplength=690,
-        ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
+            wraplength=620,
+        ).pack(fill="x", pady=(4, 0))
 
-        top = ctk.CTkFrame(shell, fg_color="transparent")
-        top.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 10))
-        top.grid_columnconfigure(1, weight=1)
+        control = ctk.CTkFrame(
+            shell,
+            fg_color=ui["BG_SECONDARY"],
+            border_width=1,
+            border_color=ui["BORDER_COLOR"],
+            corner_radius=8,
+        )
+        control.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        control.grid_columnconfigure(1, weight=1)
 
         self.toggle = ctk.CTkSwitch(
-            top,
+            control,
             text="Bật kết nối điện thoại",
             variable=self.enabled_var,
             command=self._apply_enabled_state,
             font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            text_color=palette["FG_PRIMARY"],
-            progress_color=palette["ACCENT"],
+            text_color=ui["FG_PRIMARY"],
+            progress_color=ui["ACCENT"],
+            button_color="#ffffff",
         )
-        self.toggle.grid(row=0, column=0, sticky="w", padx=(0, 16), pady=4)
+        self.toggle.grid(row=0, column=0, sticky="w", padx=16, pady=14)
 
         ctk.CTkLabel(
-            top,
+            control,
             text="Cổng",
             font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"),
-            text_color=palette["FG_SECONDARY"],
+            text_color=ui["FG_SECONDARY"],
         ).grid(row=0, column=1, sticky="e", padx=(0, 8))
-        ctk.CTkEntry(top, textvariable=self.port_var, width=90, font=(FONT_FAMILY, FONT_SIZE_NORMAL)).grid(row=0, column=2, sticky="e")
+        ctk.CTkEntry(
+            control,
+            textvariable=self.port_var,
+            width=86,
+            height=34,
+            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
+            fg_color=ui["BG_INPUT"],
+            border_color=ui["BORDER_COLOR"],
+            text_color=ui["FG_PRIMARY"],
+        ).grid(row=0, column=2, sticky="e", padx=(0, 16))
 
         ctk.CTkLabel(
             shell,
             textvariable=self.status_var,
-            font=(FONT_FAMILY, FONT_SIZE_SMALL),
-            text_color=palette["FG_SECONDARY"],
+            font=(FONT_FAMILY, FONT_SIZE_NORMAL),
+            text_color=ui["FG_SECONDARY"],
             anchor="w",
             justify="left",
-            wraplength=690,
-        ).grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 10))
+            wraplength=800,
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
 
-        pair_box = ctk.CTkFrame(shell, fg_color=palette["BG_PRIMARY"], corner_radius=12)
-        pair_box.grid(row=4, column=0, sticky="ew", padx=16, pady=(0, 12))
+        pair_box = ctk.CTkFrame(
+            shell,
+            fg_color=ui["CARD_SOFT"],
+            border_width=1,
+            border_color="#cce9e4",
+            corner_radius=8,
+        )
+        pair_box.grid(row=3, column=0, sticky="ew", pady=(0, 12))
         pair_box.grid_columnconfigure(0, weight=1)
         pair_box.grid_columnconfigure(1, weight=0)
 
         ctk.CTkLabel(
             pair_box,
             text="Mã kết nối",
-            font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"),
-            text_color=palette["FG_SECONDARY"],
+            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
+            text_color=ui["FG_SECONDARY"],
             anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 0))
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 2))
         ctk.CTkLabel(
             pair_box,
             textvariable=self.code_var,
-            font=(FONT_FAMILY, 32, "bold"),
-            text_color=palette["FG_PRIMARY"],
+            font=(FONT_FAMILY, 36, "bold"),
+            text_color=ui["FG_PRIMARY"],
             anchor="w",
-        ).grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 4))
+        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 4))
         ctk.CTkLabel(
             pair_box,
             textvariable=self.url_var,
-            font=(FONT_FAMILY, FONT_SIZE_SMALL),
-            text_color=palette["FG_SECONDARY"],
+            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
+            text_color=ui["ACCENT"],
             anchor="w",
-            wraplength=470,
-        ).grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
+            wraplength=560,
+        ).grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
 
-        self.qr_label = ctk.CTkLabel(pair_box, text="")
-        self.qr_label.grid(row=0, column=1, rowspan=3, sticky="e", padx=14, pady=12)
+        qr_shell = ctk.CTkFrame(pair_box, fg_color="#ffffff", corner_radius=8)
+        qr_shell.grid(row=0, column=1, rowspan=3, sticky="e", padx=16, pady=16)
+        self.qr_label = ctk.CTkLabel(qr_shell, text="")
+        self.qr_label.pack(padx=10, pady=10)
 
         actions = ctk.CTkFrame(shell, fg_color="transparent")
-        actions.grid(row=5, column=0, sticky="ew", padx=16, pady=(0, 12))
+        actions.grid(row=4, column=0, sticky="ew", pady=(0, 12))
         actions.grid_columnconfigure((0, 1, 2), weight=1)
-        ctk.CTkButton(
-            actions,
-            text="Đổi mã",
-            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            fg_color=palette["ACCENT_CHOICE"],
-            hover_color=palette["ACCENT_CHOICE_HOVER"],
-            text_color=palette["FG_PRIMARY"],
-            corner_radius=10,
-            command=self._rotate_code,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            actions,
-            text="Mở AT Remote",
-            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            fg_color=palette["ACCENT"],
-            hover_color=palette["ACCENT_HOVER"],
-            text_color="#ffffff",
-            corner_radius=10,
-            command=self._open_remote_url,
-        ).grid(row=0, column=1, sticky="ew", padx=4)
-        ctk.CTkButton(
-            actions,
-            text="Đóng",
-            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            fg_color=palette["ACCENT_CHOICE"],
-            hover_color=palette["ACCENT_CHOICE_HOVER"],
-            text_color=palette["FG_PRIMARY"],
-            corner_radius=10,
-            command=self.destroy,
-        ).grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        self._button(actions, "Đổi mã", self._rotate_code, 0, tone="neutral")
+        self._button(actions, "Mở AT Remote", self._open_remote_url, 1, tone="primary")
+        self._button(actions, "Đóng", self.destroy, 2, tone="neutral")
 
         lists = ctk.CTkFrame(shell, fg_color="transparent")
-        lists.grid(row=6, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        lists.grid(row=5, column=0, sticky="nsew")
         lists.grid_columnconfigure((0, 1), weight=1)
-        shell.grid_rowconfigure(6, weight=1)
+        lists.grid_rowconfigure(0, weight=1)
 
-        self.pending_frame = ctk.CTkScrollableFrame(lists, fg_color=palette["BG_PRIMARY"], corner_radius=12, height=210)
+        self.pending_frame = ctk.CTkScrollableFrame(
+            lists,
+            fg_color=ui["BG_SECONDARY"],
+            border_width=1,
+            border_color=ui["BORDER_COLOR"],
+            corner_radius=8,
+            height=220,
+        )
         self.pending_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        self.devices_frame = ctk.CTkScrollableFrame(lists, fg_color=palette["BG_PRIMARY"], corner_radius=12, height=210)
+        self.devices_frame = ctk.CTkScrollableFrame(
+            lists,
+            fg_color=ui["BG_SECONDARY"],
+            border_width=1,
+            border_color=ui["BORDER_COLOR"],
+            corner_radius=8,
+            height=220,
+        )
         self.devices_frame.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
         self._refresh()
         self.after(1000, self._poll)
+
+    def _button(self, parent, text: str, command, column: int, *, tone: str) -> None:
+        ui = self._palette
+        if tone == "primary":
+            fg = ui["ACCENT_BLUE"]
+            hover = ui["ACCENT_BLUE_HOVER"]
+            text_color = "#ffffff"
+        else:
+            fg = ui["ACCENT_CHOICE"]
+            hover = ui["ACCENT_CHOICE_HOVER"]
+            text_color = ui["FG_PRIMARY"]
+        ctk.CTkButton(
+            parent,
+            text=text,
+            height=38,
+            font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
+            fg_color=fg,
+            hover_color=hover,
+            text_color=text_color,
+            corner_radius=8,
+            command=command,
+        ).grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 5, 0 if column == 2 else 5))
 
     def _apply_enabled_state(self) -> None:
         enabled = bool(self.enabled_var.get())
@@ -241,10 +310,10 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         urls = list(snapshot.get("pairingUrls") or snapshot.get("urls") or [])
         self.url_var.set(str(urls[0]) if urls else "Chưa có địa chỉ. Hãy bật kết nối điện thoại.")
         if running:
-            ready = "AT Remote đã sẵn sàng." if snapshot.get("staticAppReady") else "AT Remote cần được build trước khi mở trực tiếp từ cổng này."
+            ready = "AT Remote đã sẵn sàng." if snapshot.get("staticAppReady") else "Dùng app Android và nhập địa chỉ bên dưới."
             self.status_var.set(f"{ready} Điện thoại và máy tính cần cùng WiFi.")
         else:
-            self.status_var.set("Đang tắt. Bật kết nối điện thoại để ghép đôi thiết bị.")
+            self.status_var.set("Đang tắt. Bật kết nối điện thoại để ghép nối thiết bị.")
         self._render_qr(str(urls[0] if urls else ""))
         self._render_pending(list(snapshot.get("pending") or []))
         self._render_devices(list(snapshot.get("devices") or []))
@@ -255,96 +324,113 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             return
         try:
             import qrcode
-            from PIL import Image
         except Exception:
-            self.qr_label.configure(text="Quét mã\nsau khi cài qrcode", image=None)
+            self.qr_label.configure(text="Cài qrcode để hiện mã", image=None)
             return
         try:
-            image = qrcode.make(url).resize((132, 132))
-            self._qr_image = ctk.CTkImage(light_image=image, dark_image=image, size=(132, 132))
+            image = qrcode.make(url).resize((148, 148))
+            self._qr_image = ctk.CTkImage(light_image=image, dark_image=image, size=(148, 148))
             self.qr_label.configure(text="", image=self._qr_image)
         except Exception:
             self.qr_label.configure(text="", image=None)
 
     def _render_pending(self, items: list[dict]) -> None:
+        ui = self._palette
         for child in self.pending_frame.winfo_children():
             child.destroy()
         ctk.CTkLabel(
             self.pending_frame,
             text="Thiết bị đang chờ",
             font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            text_color=self._palette["FG_PRIMARY"],
+            text_color=ui["FG_PRIMARY"],
             anchor="w",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        ).pack(fill="x", padx=12, pady=(12, 7))
         if not items:
             ctk.CTkLabel(
                 self.pending_frame,
-                text="Chưa có thiết bị nào đang chờ xác nhận.",
+                text="Chưa có điện thoại nào đang chờ xác nhận.",
                 font=(FONT_FAMILY, FONT_SIZE_SMALL),
-                text_color=self._palette["FG_SECONDARY"],
+                text_color=ui["FG_SECONDARY"],
                 anchor="w",
                 justify="left",
-                wraplength=300,
-            ).pack(fill="x", padx=10, pady=(0, 10))
+                wraplength=330,
+            ).pack(fill="x", padx=12, pady=(0, 12))
             return
         for item in items:
-            row = ctk.CTkFrame(self.pending_frame, fg_color="transparent")
-            row.pack(fill="x", padx=10, pady=6)
+            row = ctk.CTkFrame(self.pending_frame, fg_color=ui["CARD_BLUE"], corner_radius=8)
+            row.pack(fill="x", padx=12, pady=6)
             ctk.CTkLabel(
                 row,
-                text=f"{item.get('deviceName') or 'Điện thoại'}\n{item.get('clientHost') or 'LAN'}",
+                text=f"{item.get('deviceName') or 'Điện thoại'}\n{item.get('clientHost') or 'Cùng WiFi'}",
                 font=(FONT_FAMILY, FONT_SIZE_SMALL),
-                text_color=self._palette["FG_PRIMARY"],
+                text_color=ui["FG_PRIMARY"],
                 anchor="w",
                 justify="left",
-            ).pack(fill="x", pady=(0, 6))
+            ).pack(fill="x", padx=10, pady=(10, 7))
             buttons = ctk.CTkFrame(row, fg_color="transparent")
-            buttons.pack(fill="x")
+            buttons.pack(fill="x", padx=10, pady=(0, 10))
             request_id = str(item.get("id") or "")
-            ctk.CTkButton(buttons, text="Cho phép", height=30, command=lambda rid=request_id: self._approve(rid)).pack(side="left", expand=True, fill="x", padx=(0, 4))
-            ctk.CTkButton(buttons, text="Từ chối", height=30, fg_color=self._palette["ACCENT_CANCEL"], hover_color=self._palette["ACCENT_CANCEL_HOVER"], text_color="#1a1a2e", command=lambda rid=request_id: self._reject(rid)).pack(side="left", expand=True, fill="x", padx=(4, 0))
+            ctk.CTkButton(
+                buttons,
+                text="Cho phép",
+                height=30,
+                fg_color=ui["ACCENT"],
+                hover_color=ui["ACCENT_HOVER"],
+                text_color="#ffffff",
+                command=lambda rid=request_id: self._approve(rid),
+            ).pack(side="left", expand=True, fill="x", padx=(0, 4))
+            ctk.CTkButton(
+                buttons,
+                text="Từ chối",
+                height=30,
+                fg_color=ui["ACCENT_CANCEL"],
+                hover_color=ui["ACCENT_CANCEL_HOVER"],
+                text_color=ui["FG_ERROR"],
+                command=lambda rid=request_id: self._reject(rid),
+            ).pack(side="left", expand=True, fill="x", padx=(4, 0))
 
     def _render_devices(self, items: list[dict]) -> None:
+        ui = self._palette
         for child in self.devices_frame.winfo_children():
             child.destroy()
         ctk.CTkLabel(
             self.devices_frame,
             text="Thiết bị đã kết nối",
             font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
-            text_color=self._palette["FG_PRIMARY"],
+            text_color=ui["FG_PRIMARY"],
             anchor="w",
-        ).pack(fill="x", padx=10, pady=(10, 6))
+        ).pack(fill="x", padx=12, pady=(12, 7))
         if not items:
             ctk.CTkLabel(
                 self.devices_frame,
-                text="Chưa có thiết bị nào.",
+                text="Chưa có điện thoại nào.",
                 font=(FONT_FAMILY, FONT_SIZE_SMALL),
-                text_color=self._palette["FG_SECONDARY"],
+                text_color=ui["FG_SECONDARY"],
                 anchor="w",
-            ).pack(fill="x", padx=10, pady=(0, 10))
+            ).pack(fill="x", padx=12, pady=(0, 12))
             return
         for item in items:
-            row = ctk.CTkFrame(self.devices_frame, fg_color="transparent")
-            row.pack(fill="x", padx=10, pady=6)
+            row = ctk.CTkFrame(self.devices_frame, fg_color=ui["BG_INPUT"], corner_radius=8)
+            row.pack(fill="x", padx=12, pady=6)
             ctk.CTkLabel(
                 row,
                 text=f"{item.get('name') or 'Điện thoại'}\nLần cuối: {item.get('lastSeen') or 'chưa có'}",
                 font=(FONT_FAMILY, FONT_SIZE_SMALL),
-                text_color=self._palette["FG_PRIMARY"],
+                text_color=ui["FG_PRIMARY"],
                 anchor="w",
                 justify="left",
-                wraplength=300,
-            ).pack(fill="x", pady=(0, 6))
+                wraplength=330,
+            ).pack(fill="x", padx=10, pady=(10, 7))
             device_id = str(item.get("id") or "")
             ctk.CTkButton(
                 row,
                 text="Xóa thiết bị",
                 height=30,
-                fg_color=self._palette["ACCENT_CANCEL"],
-                hover_color=self._palette["ACCENT_CANCEL_HOVER"],
-                text_color="#1a1a2e",
+                fg_color=ui["ACCENT_CANCEL"],
+                hover_color=ui["ACCENT_CANCEL_HOVER"],
+                text_color=ui["FG_ERROR"],
                 command=lambda did=device_id: self._revoke(did),
-            ).pack(fill="x")
+            ).pack(fill="x", padx=10, pady=(0, 10))
 
     def _poll(self) -> None:
         if not self.winfo_exists():
