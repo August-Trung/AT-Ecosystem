@@ -11,6 +11,7 @@ ToolName = Literal[
     "copy_path",
     "move_path",
     "web_search",
+    "web_app_action",
     "ask_clarify",
     "hide_email",
     "check_email",

@@ -390,7 +390,7 @@ class TelegramBotBridge:
 
         self._notify_user_message(command, chat_id, user_id)
         try:
-            result = self.engine.handle_turn(command)
+            result = self._handle_engine_command(command)
         except Exception as exc:
             logger.exception("Engine error for Telegram user_id=%s chat_id=%s", user_id, chat_id)
             result = ActionResult.err(f"Lỗi nội bộ: {exc}")
@@ -435,12 +435,18 @@ class TelegramBotBridge:
         self.answer_callback(callback_id, "Đang xử lý...")
         self._notify_user_message(command, chat_id, user_id)
         try:
-            result = self.engine.handle_turn(command)
+            result = self._handle_engine_command(command)
         except Exception as exc:
             logger.exception("Engine error for Telegram callback user_id=%s chat_id=%s", user_id, chat_id)
             result = ActionResult.err(f"Lỗi nội bộ: {exc}")
         self._notify_result(result, chat_id)
         self.send_result(chat_id, result)
+
+    def _handle_engine_command(self, command: str) -> ActionResult:
+        try:
+            return self.engine.handle_turn(command, source="telegram")
+        except TypeError:
+            return self.engine.handle_turn(command)
 
     def _notify_user_message(self, command: str, chat_id: int, user_id: int) -> None:
         if not self.on_user_message:
@@ -594,7 +600,18 @@ def sanitize_telegram_message(message: str) -> str:
 
 def reply_markup_for_result(result: ActionResult) -> dict[str, Any] | None:
     command_buttons = []
+    url_buttons = []
     if isinstance(result.data, dict):
+        raw_url_buttons = result.data.get("telegram_url_buttons") or []
+        if isinstance(raw_url_buttons, list):
+            for item in raw_url_buttons[:6]:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text") or "").strip()[:48]
+                url = str(item.get("url") or "").strip()
+                if text and url.startswith(("http://", "https://")):
+                    url_buttons.append({"text": text, "url": url})
+
         raw_buttons = result.data.get("telegram_command_buttons") or []
         if isinstance(raw_buttons, list):
             for item in raw_buttons[:12]:
@@ -604,6 +621,7 @@ def reply_markup_for_result(result: ActionResult) -> dict[str, Any] | None:
                 command = str(item.get("command") or "").strip()
                 if text and command:
                     command_buttons.append({"text": text, "callback_data": f"{CALLBACK_COMMAND_PREFIX}{command}"[:64]})
+    url_rows = [[button] for button in url_buttons]
     command_rows = [command_buttons[i : i + 2] for i in range(0, len(command_buttons), 2)]
 
     if result.status == ActionStatus.NEED_CONFIRM:
@@ -613,6 +631,7 @@ def reply_markup_for_result(result: ActionResult) -> dict[str, Any] | None:
                     {"text": "Hủy", "callback_data": CALLBACK_NO},
                 ]
             ]
+        rows.extend(url_rows)
         rows.extend(command_rows)
         return {"inline_keyboard": rows}
 
@@ -627,8 +646,13 @@ def reply_markup_for_result(result: ActionResult) -> dict[str, Any] | None:
         per_row = 2 if use_choice_labels else 5
         rows = [buttons[i : i + per_row] for i in range(0, len(buttons), per_row)]
         if rows:
+            rows.extend(url_rows)
             rows.extend(command_rows)
             return {"inline_keyboard": rows}
+    if url_rows:
+        rows = list(url_rows)
+        rows.extend(command_rows)
+        return {"inline_keyboard": rows}
     if command_rows:
         return {"inline_keyboard": command_rows}
     return None

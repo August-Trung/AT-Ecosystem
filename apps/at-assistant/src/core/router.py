@@ -6,6 +6,7 @@ hay chuyển qua LLM tool-calling.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -26,6 +27,7 @@ from vietnam_number import w2n
 class RouteType(str, Enum):
     CHAT = "chat"
     WEB_SEARCH = "web_search"
+    WEB_APP_ACTION = "web_app_action"
     OPEN_URL = "open_url"
     YOUTUBE_SEARCH = "youtube_search"
     YOUTUBE_CONTROL = "youtube_control"
@@ -1365,6 +1367,220 @@ def _extract_first_path(text: str) -> str:
 
 def _normalize(text: str) -> str:
     return " ".join(text.strip().lower().split())
+
+
+def _fold_ascii(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text or "")
+    without_marks = "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+    return without_marks.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _extract_url_or_colon_payload(raw: str) -> str:
+    url_match = re.search(r"(https?://\S+|www\.\S+)", raw or "", re.IGNORECASE)
+    if url_match:
+        return url_match.group(1).strip()
+    if ":" in (raw or ""):
+        payload = raw.split(":", 1)[1].strip()
+        return payload
+    return ""
+
+
+def _extract_structured_payload(raw: str) -> str:
+    text = raw or ""
+    fenced = re.search(r"```(?:json|xml)?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
+    if fenced:
+        return fenced.group(1).strip()
+    for marker, closer in (("{", "}"), ("[", "]")):
+        index = text.find(marker)
+        if index >= 0:
+            depth = 0
+            in_string = False
+            escape = False
+            for offset, ch in enumerate(text[index:], start=index):
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == marker:
+                    depth += 1
+                elif ch == closer:
+                    depth -= 1
+                    if depth == 0:
+                        return text[index : offset + 1].strip()
+            return text[index:].strip()
+    xml_index = text.find("<")
+    if xml_index >= 0:
+        return text[xml_index:].strip()
+    if ":" in text:
+        return text.split(":", 1)[1].strip()
+    return ""
+
+
+def _extract_number_after_hint(folded: str) -> int:
+    match = re.search(r"(?:so|number|#)\s*(\d+)", folded)
+    if match:
+        return int(match.group(1))
+    match = re.search(r"\b(\d+)\b", folded)
+    return int(match.group(1)) if match else 0
+
+
+def _mmo_action_decision(action_id: str, route_path: str, raw: str, reason: str) -> RouteDecision:
+    return RouteDecision(
+        type=RouteType.WEB_APP_ACTION,
+        args={
+            "app_id": "mmo-web",
+            "action_id": action_id,
+            "args": {"route": route_path, "raw": raw},
+        },
+        reason=reason,
+        confidence=0.88,
+    )
+
+
+def _has_any(folded: str, hints: tuple[str, ...]) -> bool:
+    return any(hint in folded for hint in hints)
+
+
+def _extract_web_app_action_decision(raw: str, normalized: str) -> RouteDecision | None:
+    folded = _fold_ascii(normalized)
+    has_mmo_context = any(
+        hint in folded
+        for hint in (
+            "mmo",
+            "at tools",
+            "mmo tools",
+        )
+    )
+    has_tool_context = any(
+        hint in folded
+        for hint in (
+            "tool",
+            "cong cu",
+            "web app",
+        )
+    )
+    has_open_hint = any(hint in folded for hint in ("mo", "open", "bat", "vao", "chay", "tao"))
+
+    if _has_any(folded, ("json schema", "schema validate", "validate schema")):
+        return _mmo_action_decision("mmo.openJsonSchemaValidator", "/json-schema", raw, "MMO Tools JSON schema validator action.")
+
+    if _has_any(folded, ("json diff", "compare json", "so sanh json")):
+        return _mmo_action_decision("mmo.openJsonDiff", "/json-diff", raw, "MMO Tools JSON diff action.")
+
+    if _has_any(folded, ("yaml", "json yaml", "yaml json")):
+        return _mmo_action_decision("mmo.openYamlJson", "/yaml-json", raw, "MMO Tools YAML/JSON action.")
+
+    if "qr" in folded and (has_mmo_context or has_tool_context or has_open_hint or "tao" in folded):
+        args: dict[str, Any] = {}
+        payload = _extract_url_or_colon_payload(raw)
+        if payload:
+            args["text"] = payload
+        return RouteDecision(
+            type=RouteType.WEB_APP_ACTION,
+            args={
+                "app_id": "mmo-web",
+                "action_id": "mmo.openQrGenerator",
+                "args": args,
+            },
+            reason="MMO Tools QR web action.",
+            confidence=0.9,
+        )
+
+    if any(hint in folded for hint in ("temp mail", "tempmail", "mail tam", "email tam")):
+        operation = "inbox"
+        args: dict[str, Any] = {}
+        if any(hint in folded for hint in (" moi", "new", "create", "generate", "tao ")):
+            operation = "new"
+        if any(hint in folded for hint in ("doc", "read", "xem mail so", "mail so")):
+            operation = "read"
+            args["index"] = _extract_number_after_hint(folded)
+        args["operation"] = operation
+        return RouteDecision(
+            type=RouteType.WEB_APP_ACTION,
+            args={
+                "app_id": "mmo-web",
+                "action_id": "mmo.openTempMail",
+                "args": args,
+            },
+            reason="MMO Tools temp mail web action.",
+            confidence=0.9,
+        )
+
+    if "json" in folded and (
+        has_mmo_context
+        or has_tool_context
+        or "format" in folded
+        or "formatter" in folded
+        or "dinh dang" in folded
+        or "lam dep" in folded
+    ):
+        operation = "beautify"
+        if any(hint in folded for hint in ("minify", "rut gon", "compact")):
+            operation = "minify"
+        if "parse" in folded and "string" in folded:
+            operation = "parse_string"
+        if "xml" in folded and "json" not in folded:
+            operation = "xml"
+        payload = _extract_structured_payload(raw)
+        return RouteDecision(
+            type=RouteType.WEB_APP_ACTION,
+            args={
+                "app_id": "mmo-web",
+                "action_id": "mmo.openJsonFormatter",
+                "args": {"operation": operation, "text": payload},
+            },
+            reason="MMO Tools JSON formatter web action.",
+            confidence=0.88,
+        )
+
+    generic_rules: tuple[tuple[tuple[str, ...], str, str, str], ...] = (
+        (("hash", "md5", "sha1", "sha256", "sha384", "sha512"), "mmo.openHashTool", "/hash", "MMO Tools hash action."),
+        (("base64", "url encode", "url decode", "hex encode", "hex decode"), "mmo.openTextTools", "/text-tools", "MMO Tools text encode/decode action."),
+        (("timestamp", "unix time", "epoch"), "mmo.openTimestampTool", "/timestamp", "MMO Tools timestamp action."),
+        (("id gen", "uuid gen", "ulid", "nanoid"), "mmo.openIdGenerator", "/id-gen", "MMO Tools ID generator action."),
+        (("password", "mat khau"), "mmo.openPasswordGenerator", "/password", "MMO Tools password generator action."),
+        (("regex", "regexp"), "mmo.openRegexTester", "/regex", "MMO Tools regex tester action."),
+        (("extract email", "extract ip", "extract proxy", "tach email", "tach ip", "tach proxy"), "mmo.openListExtractor", "/extractor", "MMO Tools list extractor action."),
+        (("key value", "kv line", "key:value", "key : value"), "mmo.openKeyValueFormatter", "/kv-line-format", "MMO Tools key/value formatter action."),
+        (("sql format", "format sql", "dinh dang sql"), "mmo.openSqlFormatter", "/sql-format", "MMO Tools SQL formatter action."),
+        (("diff", "compare text", "so sanh text"), "mmo.openDiffChecker", "/diff", "MMO Tools diff action."),
+        (("readability", "word count", "dem tu"), "mmo.openReadability", "/readability", "MMO Tools readability action."),
+        (("keyword", "keywords", "tu khoa"), "mmo.openKeywordExtractor", "/keywords", "MMO Tools keyword extractor action."),
+        (("similarity", "jaccard", "tuong dong"), "mmo.openSimilarityChecker", "/similarity", "MMO Tools similarity action."),
+        (("uuid check", "validate uuid", "kiem tra uuid"), "mmo.openUuidTool", "/uuid-check", "MMO Tools UUID validator action."),
+        (("jwt", "decode jwt", "verify jwt"), "mmo.openJwtTool", "/jwt", "MMO Tools JWT action."),
+        (("canonical", "hreflang"), "mmo.openCanonicalBuilder", "/canonical", "MMO Tools canonical action."),
+        (("shorten", "short url", "rut gon link", "rut gon url"), "mmo.openUrlShortener", "/shorten", "MMO Tools URL shortener action."),
+        (("vietqr", "bank qr", "qr ngan hang"), "mmo.openVietQR", "/vietqr", "MMO Tools VietQR action."),
+        (("gwei", "wei", " eth ", "crypto"), "mmo.openCryptoConverter", "/crypto", "MMO Tools crypto converter action."),
+        (("user agent", "ua gen"), "mmo.openUserAgentGenerator", "/ua-gen", "MMO Tools user-agent action."),
+        (("cron", "crontab"), "mmo.openCronParser", "/cron", "MMO Tools cron action."),
+        (("2fa", "totp"), "mmo.openTwoFAGenerator", "/2fa", "MMO Tools 2FA action."),
+    )
+    for hints, action_id, route_path, reason in generic_rules:
+        if _has_any(folded, hints) and (has_mmo_context or has_tool_context or action_id != "mmo.openDiffChecker"):
+            return _mmo_action_decision(action_id, route_path, raw, reason)
+
+    if has_mmo_context and has_open_hint:
+        return RouteDecision(
+            type=RouteType.WEB_APP_ACTION,
+            args={
+                "app_id": "mmo-web",
+                "action_id": "mmo.openHome",
+                "args": {},
+            },
+            reason="Open MMO Tools web app.",
+            confidence=0.86,
+        )
+
+    return None
 
 
 def _strip_leading_action(text: str) -> str:
@@ -2943,6 +3159,10 @@ def _ml_nlu_route_decision(raw: str) -> RouteDecision | None:
 def route(user_text: str) -> RouteDecision:
     raw = user_text or ""
     t = _normalize(raw)
+
+    web_app_action_decision = _extract_web_app_action_decision(raw, t)
+    if web_app_action_decision is not None:
+        return web_app_action_decision
 
     remote_decision = _extract_remote_control_decision(raw)
     if remote_decision is not None:

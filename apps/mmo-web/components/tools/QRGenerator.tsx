@@ -1,5 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { QrCode, Wifi, Download } from 'lucide-react';
+
+const readPrefilledText = () => {
+  const hash = window.location.hash.startsWith('#')
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  const queryIndex = hash.indexOf('?');
+  if (queryIndex < 0) return '';
+  const params = new URLSearchParams(hash.slice(queryIndex + 1));
+  return params.get('text') || params.get('data') || '';
+};
 
 const QRGenerator = () => {
   const [mode, setMode] = useState<'text' | 'wifi'>('text');
@@ -15,6 +25,19 @@ const QRGenerator = () => {
 
   const [size, setSize] = useState(300);
   const [color, setColor] = useState('000000');
+
+  useEffect(() => {
+    const syncPrefill = () => {
+      const prefilled = readPrefilledText();
+      if (!prefilled) return;
+      setMode('text');
+      setText(prefilled);
+    };
+
+    syncPrefill();
+    window.addEventListener('hashchange', syncPrefill);
+    return () => window.removeEventListener('hashchange', syncPrefill);
+  }, []);
 
   // Construct QR Data
   let qrData = '';

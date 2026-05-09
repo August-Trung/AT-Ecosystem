@@ -1,0 +1,15 @@
+{
+  "name": "@at-ecosystem/at-protocol",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./action-manifest.schema.json": "./action-manifest.schema.json"
+  },
+  "files": [
+    "src",
+    "action-manifest.schema.json",
+    "README.md"
+  ]
+}

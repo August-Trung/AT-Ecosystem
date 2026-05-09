@@ -1,0 +1,308 @@
+{
+  "protocolVersion": "at-actions.v1",
+  "appId": "mmo-web",
+  "appName": "MMO Tools",
+  "appVersion": "0.1.0",
+  "origin": "https://mmo.augusttrung.com",
+  "actions": [
+    {
+      "id": "mmo.openHome",
+      "title": "Open MMO Tools",
+      "description": "Open the MMO Tools home/browse view.",
+      "aliases": ["mmo", "at tools", "mmo tools", "tool hub"],
+      "route": "/browse",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["navigation"]
+    },
+    {
+      "id": "mmo.openQrGenerator",
+      "title": "Open QR Generator",
+      "description": "Open the QR generator and optionally seed text/URL content.",
+      "aliases": ["qr", "qr generator", "tao qr", "ma qr"],
+      "route": "/qr-gen",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Optional text or URL to prefill."
+          }
+        }
+      },
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["qr", "utility"]
+    },
+    {
+      "id": "mmo.openTempMail",
+      "title": "Open Temp Mail",
+      "description": "Open the temporary email tool.",
+      "aliases": ["temp mail", "tempmail", "mail tam", "email tam"],
+      "route": "/temp-mail",
+      "risk": "safe",
+      "permissions": ["navigate", "network", "user-data"],
+      "tags": ["mail", "utility"]
+    },
+    {
+      "id": "mmo.openJsonFormatter",
+      "title": "Open JSON Formatter",
+      "description": "Open the JSON/XML formatter.",
+      "aliases": ["json", "json formatter", "format json", "dinh dang json"],
+      "route": "/json-format",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["dev", "utility"]
+    },
+    {
+      "id": "mmo.openHashTool",
+      "title": "Open Hash Utilities",
+      "description": "Open Hash Utilities.",
+      "aliases": ["hash", "md5", "sha1", "sha256", "sha512"],
+      "route": "/hash",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openTextTools",
+      "title": "Open Text Tools",
+      "description": "Open Text Tools.",
+      "aliases": ["base64", "url encode", "url decode", "hex encode", "hex decode"],
+      "route": "/text-tools",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openTimestampTool",
+      "title": "Open Timestamp Converter",
+      "description": "Open Timestamp Converter.",
+      "aliases": ["timestamp", "unix time", "epoch"],
+      "route": "/timestamp",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openIdGenerator",
+      "title": "Open ID Generator",
+      "description": "Open ID Generator.",
+      "aliases": ["id gen", "uuid gen", "ulid", "nanoid"],
+      "route": "/id-gen",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openPasswordGenerator",
+      "title": "Open Password Generator",
+      "description": "Open Password Generator.",
+      "aliases": ["password"],
+      "route": "/password",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openRegexTester",
+      "title": "Open Regex Tester",
+      "description": "Open Regex Tester.",
+      "aliases": ["regex", "regexp"],
+      "route": "/regex",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openListExtractor",
+      "title": "Open List Extractor",
+      "description": "Open List Extractor.",
+      "aliases": ["extract email", "extract ip", "extract proxy"],
+      "route": "/extractor",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openKeyValueFormatter",
+      "title": "Open Key Value Formatter",
+      "description": "Open Key Value Formatter.",
+      "aliases": ["key value", "kv line"],
+      "route": "/kv-line-format",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openDiffChecker",
+      "title": "Open Diff Checker",
+      "description": "Open Diff Checker.",
+      "aliases": ["diff", "compare text"],
+      "route": "/diff",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openJsonDiff",
+      "title": "Open JSON Diff",
+      "description": "Open JSON Diff.",
+      "aliases": ["json diff", "compare json"],
+      "route": "/json-diff",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openYamlJson",
+      "title": "Open YAML JSON Converter",
+      "description": "Open YAML JSON Converter.",
+      "aliases": ["yaml", "json yaml"],
+      "route": "/yaml-json",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openSqlFormatter",
+      "title": "Open SQL Formatter",
+      "description": "Open SQL Formatter.",
+      "aliases": ["sql format", "format sql"],
+      "route": "/sql-format",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openReadability",
+      "title": "Open Readability Analyzer",
+      "description": "Open Readability Analyzer.",
+      "aliases": ["readability", "word count"],
+      "route": "/readability",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openKeywordExtractor",
+      "title": "Open Keyword Extractor",
+      "description": "Open Keyword Extractor.",
+      "aliases": ["keyword", "keywords"],
+      "route": "/keywords",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openSimilarityChecker",
+      "title": "Open Similarity Checker",
+      "description": "Open Similarity Checker.",
+      "aliases": ["similarity", "jaccard"],
+      "route": "/similarity",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openUuidTool",
+      "title": "Open UUID Validator",
+      "description": "Open UUID Validator.",
+      "aliases": ["uuid check", "validate uuid"],
+      "route": "/uuid-check",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openJwtTool",
+      "title": "Open JWT Tool",
+      "description": "Open JWT Tool.",
+      "aliases": ["jwt", "decode jwt"],
+      "route": "/jwt",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openJsonSchemaValidator",
+      "title": "Open JSON Schema Validator",
+      "description": "Open JSON Schema Validator.",
+      "aliases": ["json schema", "schema validate"],
+      "route": "/json-schema",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openCanonicalBuilder",
+      "title": "Open Canonical Builder",
+      "description": "Open Canonical Builder.",
+      "aliases": ["canonical", "hreflang"],
+      "route": "/canonical",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openUrlShortener",
+      "title": "Open URL Shortener",
+      "description": "Open URL Shortener.",
+      "aliases": ["shorten", "short url"],
+      "route": "/shorten",
+      "risk": "safe",
+      "permissions": ["navigate", "network"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openVietQR",
+      "title": "Open VietQR Generator",
+      "description": "Open VietQR Generator.",
+      "aliases": ["vietqr", "bank qr"],
+      "route": "/vietqr",
+      "risk": "safe",
+      "permissions": ["navigate", "network"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openCryptoConverter",
+      "title": "Open Crypto Converter",
+      "description": "Open Crypto Converter.",
+      "aliases": ["eth", "gwei", "wei"],
+      "route": "/crypto",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openUserAgentGenerator",
+      "title": "Open User Agent Generator",
+      "description": "Open User Agent Generator.",
+      "aliases": ["user agent", "ua gen"],
+      "route": "/ua-gen",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openCronParser",
+      "title": "Open Cron Parser",
+      "description": "Open Cron Parser.",
+      "aliases": ["cron", "crontab"],
+      "route": "/cron",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    },
+    {
+      "id": "mmo.openTwoFAGenerator",
+      "title": "Open 2FA Generator",
+      "description": "Open 2FA Generator.",
+      "aliases": ["2fa", "totp"],
+      "route": "/2fa",
+      "risk": "safe",
+      "permissions": ["navigate"],
+      "tags": ["utility", "telegram-native"]
+    }
+  ]
+}

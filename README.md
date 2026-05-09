@@ -173,6 +173,8 @@ Some assistant model files are currently committed because they are required by 
 - Improve release automation for web deployments and desktop builds.
 - Add public documentation for end users and contributor documentation for developers.
 
+See [docs/integration-roadmap.md](docs/integration-roadmap.md) for the first ATAssistant-to-web action registry slice.
+
 ## Project Status
 
 AT Ecosystem is under active development. Several apps are already hosted publicly, while the assistant integration layer and shared packages are still evolving.

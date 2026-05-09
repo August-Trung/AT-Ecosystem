@@ -27,12 +27,17 @@ const RouterContext = createContext<{
 	navigate: () => {},
 });
 
+const routePathFromHash = () => {
+	const hashPath = window.location.hash.substring(1) || "/";
+	return hashPath.split("?")[0] || "/";
+};
+
 export const HashRouter = ({ children }: { children: React.ReactNode }) => {
-	const [path, setPath] = useState(window.location.hash.substring(1) || "/");
+	const [path, setPath] = useState(routePathFromHash());
 
 	useEffect(() => {
 		const handler = () => {
-			setPath(window.location.hash.substring(1) || "/");
+			setPath(routePathFromHash());
 		};
 		window.addEventListener("hashchange", handler);
 		return () => window.removeEventListener("hashchange", handler);

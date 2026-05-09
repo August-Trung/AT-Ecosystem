@@ -34,6 +34,7 @@ from src.plugins.installed_apps_service import InstalledAppsService
 from src.plugins.recent_apps_service import RecentAppsService
 from src.plugins.workflow_service import WorkflowService
 from src.plugins.menu_data import MENU
+from src.integrations.web_actions import invoke_web_action
 
 RISKY_TOOLS = {
     "close_app",
@@ -149,6 +150,7 @@ class Engine:
         self.state = EngineState()
         self.logger = setup_logger()
         self._current_user_text = ""
+        self._current_source = "desktop"
         self._current_route_decision: RouteDecision | None = None
         self.memory = PersonalMemoryService()
         self.chat_sessions = ChatSessionService()
@@ -1768,9 +1770,11 @@ class Engine:
         self,
         user_text: str,
         cancel_check: Optional[Callable[[], bool]] = None,
+        source: str = "desktop",
     ) -> ActionResult:
         user_text = user_text or ""
         self._current_user_text = user_text
+        self._current_source = (source or "desktop").strip().lower()
         self._current_route_decision = None
         self.logger.info(f"USER: {user_text}")
 
@@ -1875,6 +1879,11 @@ class Engine:
 
             if decision.type == RouteType.OPEN_URL:
                 res = executor.open_url(**decision.args)
+                self._log_result(res)
+                return res
+
+            if decision.type == RouteType.WEB_APP_ACTION:
+                res = invoke_web_action(**decision.args, delivery=self._current_source)
                 self._log_result(res)
                 return res
 
@@ -2834,6 +2843,8 @@ class Engine:
         if tool == "web_search":
             query = args.get("query") or user_text or "unknown"
             return executor.web_search(query=query)
+        if tool == "web_app_action":
+            return invoke_web_action(**args, delivery=self._current_source)
         if tool == "hide_email":
             return executor._handle_email_settings(**args)
         if tool == "check_email":
