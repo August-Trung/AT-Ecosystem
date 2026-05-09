@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import base64
 
 import requests
 
@@ -134,6 +135,110 @@ def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path
         assert received[-1]["command"] == "trạng thái máy"
         assert results[-1]["status"] == "success"
         assert results[-1]["result"].message == "Trạng thái máy"
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_serves_result_file_without_exposing_path(tmp_path, monkeypatch):
+    document_path = tmp_path / "report.txt"
+    document_path.write_text("hello from desktop", encoding="utf-8")
+
+    class _DocumentEngine(_FakeEngine):
+        def handle_turn(self, command: str, cancel_check=None, source: str = "desktop") -> ActionResult:
+            self.calls.append((command, source))
+            return ActionResult.ok("Tệp đã sẵn sàng.", telegram_document_path=str(document_path))
+
+    bridge = MobileRemoteBridge(_DocumentEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = requests.post(
+            f"{base}/api/command",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"command": "gửi file báo cáo"},
+            timeout=3,
+        ).json()
+
+        file_cards = [card for card in payload["cards"] if card.get("type") == "file"]
+        assert file_cards
+        public_file = file_cards[0]["file"]
+        assert public_file["name"] == "report.txt"
+        assert public_file["downloadUrl"].startswith("/api/files/")
+        assert "telegram_document_path" not in payload["raw"]["data"]
+
+        downloaded = requests.get(f"{base}{public_file['downloadUrl']}", timeout=3)
+        assert downloaded.status_code == 200
+        assert downloaded.content == b"hello from desktop"
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_upload_saves_file_and_can_run_command(tmp_path, monkeypatch):
+    events: list[tuple[str, dict]] = []
+    engine = _FakeEngine()
+    bridge = MobileRemoteBridge(
+        engine,
+        settings_store=_store(tmp_path, monkeypatch),
+        on_event=lambda event, payload: events.append((event, payload)),
+    )
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+        raw = b"mobile upload"
+
+        payload = requests.post(
+            f"{base}/api/upload",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={
+                "name": "note.txt",
+                "mime": "text/plain",
+                "command": "mở file này",
+                "dataBase64": base64.b64encode(raw).decode("ascii"),
+            },
+            timeout=3,
+        ).json()
+
+        assert payload["status"] == "success"
+        assert engine.calls
+        assert engine.calls[-1][1] == "mobile"
+        assert "note.txt" in engine.calls[-1][0]
+        assert [event for event, _payload in events].count("file_received") == 1
+        upload_card = [card for card in payload["cards"] if card.get("type") == "file"][0]
+        downloaded = requests.get(f"{base}{upload_card['file']['downloadUrl']}", timeout=3)
+        assert downloaded.content == raw
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_upload_blocks_dangerous_extensions(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = requests.post(
+            f"{base}/api/upload",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={
+                "name": "run.exe",
+                "mime": "application/octet-stream",
+                "dataBase64": base64.b64encode(b"bad").decode("ascii"),
+            },
+            timeout=3,
+        ).json()
+
+        assert payload["status"] == "error"
+        assert "nguy hiểm" in payload["message"]
     finally:
         bridge.stop()
 

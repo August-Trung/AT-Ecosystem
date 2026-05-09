@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
 import mimetypes
 import os
+import re
 import secrets
 import socket
 import threading
@@ -16,7 +18,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from src.core.app_paths import ensure_app_data_dir
 from src.core.engine import Engine
@@ -26,8 +28,30 @@ from src.core.result import ActionResult, ActionStatus, ErrorCode
 DEFAULT_REMOTE_HOST = "0.0.0.0"
 DEFAULT_REMOTE_PORT = 8765
 PAIR_REQUEST_TTL_SECONDS = 10 * 60
+REMOTE_FILE_TTL_SECONDS = 60 * 60
 MAX_COMMAND_LENGTH = 8000
 MAX_IMAGE_EMBED_BYTES = 3 * 1024 * 1024
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_JSON_BYTES = int(MAX_UPLOAD_BYTES * 1.5) + 1024 * 1024
+DANGEROUS_UPLOAD_EXTENSIONS = {
+    ".bat",
+    ".cmd",
+    ".com",
+    ".cpl",
+    ".exe",
+    ".hta",
+    ".jar",
+    ".js",
+    ".jse",
+    ".lnk",
+    ".msi",
+    ".ps1",
+    ".reg",
+    ".scr",
+    ".vbe",
+    ".vbs",
+    ".wsf",
+}
 
 
 DEFAULT_MOBILE_REMOTE_SETTINGS: dict[str, Any] = {
@@ -65,6 +89,21 @@ def _request_response(request: "PairRequest", *, include_key: bool = False) -> d
         "requestId": request.id,
         **request.to_public(include_key=include_key),
     }
+
+
+def _safe_upload_filename(name: str) -> str:
+    safe_name = Path(str(name or "").strip()).name or "mobile_file"
+    safe_name = re.sub(r"[\x00-\x1f<>:\"/\\|?*]+", "_", safe_name).strip(" .")
+    return safe_name[:120] or "mobile_file"
+
+
+def _format_bytes(size: int) -> str:
+    value = float(max(0, size))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
 
 
 def _monorepo_root() -> Path | None:
@@ -199,6 +238,32 @@ class PairRequest:
         return payload
 
 
+@dataclass
+class RemoteFileRecord:
+    id: str
+    token: str
+    path: str
+    name: str
+    mime: str
+    size: int
+    kind: str
+    owner_device_id: str
+    created_at: float = field(default_factory=time.time)
+
+    def to_public(self) -> dict[str, Any]:
+        download_path = f"/api/files/{quote(self.id)}?token={quote(self.token)}"
+        return {
+            "id": self.id,
+            "name": self.name,
+            "mime": self.mime,
+            "size": self.size,
+            "sizeLabel": _format_bytes(self.size),
+            "kind": self.kind,
+            "downloadUrl": download_path,
+            "expiresInSeconds": REMOTE_FILE_TTL_SECONDS,
+        }
+
+
 class _ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -218,6 +283,7 @@ class MobileRemoteBridge:
         self._settings = self.settings_store.load()
         self._pair_code = self._new_pair_code()
         self._pending: dict[str, PairRequest] = {}
+        self._files: dict[str, RemoteFileRecord] = {}
         self._lock = threading.RLock()
         self._engine_lock = threading.Lock()
         self._server: _ReusableThreadingHTTPServer | None = None
@@ -266,6 +332,7 @@ class MobileRemoteBridge:
             self._bound_host = ""
             self._bound_port = 0
             self._pending.clear()
+            self._files.clear()
             self._settings = self.settings_store.load()
             self._settings["enabled"] = False
             self.settings_store.save(self._settings)
@@ -408,6 +475,9 @@ class MobileRemoteBridge:
                 return False
             self._settings["paired_devices"] = after
             self.settings_store.save(self._settings)
+            for file_id, record in list(self._files.items()):
+                if record.owner_device_id == str(device_id or ""):
+                    self._files.pop(file_id, None)
         self._emit("device_revoked", {"deviceId": device_id})
         return True
 
@@ -444,7 +514,10 @@ class MobileRemoteBridge:
                 result = self.engine.handle_turn(text)
             except Exception as exc:
                 result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
-        payload = mobile_payload_from_result(result)
+        payload = mobile_payload_from_result(
+            result,
+            file_resolver=lambda path, kind: self._register_file(path, public_device, kind=kind),
+        )
         payload["device"] = public_device
         event_payload = {
             "device": public_device,
@@ -457,6 +530,167 @@ class MobileRemoteBridge:
         self._emit("command_result", event_payload)
         self._emit("command", event_payload)
         return payload
+
+    def handle_upload(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {
+                "ok": False,
+                "status": "unauthorized",
+                "message": "Không kết nối được với máy tính.",
+                "cards": [{"type": "error", "title": "Mất kết nối", "message": "Hãy kết nối lại với ATAssistant."}],
+                "buttons": [{"label": "Thử lại", "command": "__retry__"}],
+            }
+
+        name = _safe_upload_filename(str(payload.get("name") or "mobile_file"))
+        mime = str(payload.get("mime") or mimetypes.guess_type(name)[0] or "application/octet-stream").strip()
+        command = _strip_mobile_command_prefix(str(payload.get("command") or "").strip())
+        encoded = str(payload.get("dataBase64") or payload.get("base64") or "")
+        if "," in encoded[:80]:
+            encoded = encoded.split(",", 1)[1]
+        suffix = Path(name).suffix.lower()
+        if suffix in DANGEROUS_UPLOAD_EXTENSIONS:
+            return mobile_payload_from_result(
+                ActionResult.err(
+                    "Tệp này có định dạng nguy hiểm nên ATAssistant chưa nhận từ điện thoại.",
+                    code=ErrorCode.NOT_ALLOWED,
+                )
+            )
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            return mobile_payload_from_result(ActionResult.err("Không đọc được tệp từ điện thoại.", code=ErrorCode.UNKNOWN))
+        if not raw:
+            return mobile_payload_from_result(ActionResult.err("Tệp trống nên chưa gửi được.", code=ErrorCode.UNKNOWN))
+        if len(raw) > MAX_UPLOAD_BYTES:
+            return mobile_payload_from_result(
+                ActionResult.err(f"Tệp quá lớn. Bản đầu tiên hỗ trợ tối đa {_format_bytes(MAX_UPLOAD_BYTES)}.", code=ErrorCode.UNKNOWN)
+            )
+
+        public_device = _public_device(device)
+        target_dir = ensure_app_data_dir("mobile_uploads") / (public_device.get("id") or "device")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / name
+        if target.exists():
+            stem = target.stem or "mobile_file"
+            target = target_dir / f"{stem}_{int(time.time())}{target.suffix}"
+        target.write_bytes(raw)
+
+        uploaded_file = self._register_file(target, public_device, kind="upload")
+        if not uploaded_file:
+            return mobile_payload_from_result(ActionResult.err("Đã lưu tệp nhưng chưa tạo được liên kết tải về.", code=ErrorCode.INTERNAL_ERROR))
+        self._emit(
+            "file_received",
+            {
+                "device": public_device,
+                "file": uploaded_file,
+                "path": str(target),
+                "command": command,
+            },
+        )
+
+        if command:
+            display_command = f"{command}\nTệp: {target.name}"
+            self._emit(
+                "command_received",
+                {
+                    "device": public_device,
+                    "command": command,
+                    "displayCommand": display_command,
+                    "attachments": [uploaded_file],
+                },
+            )
+            engine_command = f'{command} "{target}"'
+            with self._engine_lock:
+                try:
+                    result = self.engine.handle_turn(engine_command, source="mobile")
+                except TypeError:
+                    result = self.engine.handle_turn(engine_command)
+                except Exception as exc:
+                    result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
+        else:
+            result = ActionResult.ok(
+                f"Đã nhận tệp từ điện thoại: {target.name}",
+                mobile_uploaded_file=str(target),
+                path=str(target),
+            )
+
+        response = mobile_payload_from_result(
+            result,
+            file_resolver=lambda path, kind: self._register_file(path, public_device, kind=kind),
+        )
+        response.setdefault("files", [])
+        response["files"].insert(0, uploaded_file)
+        upload_card = {
+            "type": "file",
+            "title": "Tệp đã gửi",
+            "message": f"Đã lưu trên máy tính: {target.name}",
+            "file": uploaded_file,
+        }
+        if not any(card.get("type") == "file" and (card.get("file") or {}).get("id") == uploaded_file["id"] for card in response.get("cards") or []):
+            response.setdefault("cards", []).insert(0, upload_card)
+        response["device"] = public_device
+
+        event_payload = {
+            "device": public_device,
+            "command": command,
+            "displayCommand": command,
+            "status": response.get("status"),
+            "result": result,
+            "payload": response,
+            "attachments": [uploaded_file],
+        }
+        self._emit("command_result", event_payload)
+        if command:
+            self._emit("command", event_payload)
+        return response
+
+    def _register_file(self, path: str | Path, device: dict[str, Any], *, kind: str = "file") -> dict[str, Any] | None:
+        try:
+            file_path = Path(path).resolve()
+        except Exception:
+            return None
+        if not file_path.exists() or not file_path.is_file():
+            return None
+        try:
+            size = int(file_path.stat().st_size)
+        except Exception:
+            return None
+        self._cleanup_files()
+        mime = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+        record = RemoteFileRecord(
+            id=secrets.token_urlsafe(12),
+            token=secrets.token_urlsafe(24),
+            path=str(file_path),
+            name=file_path.name,
+            mime=mime,
+            size=size,
+            kind=kind,
+            owner_device_id=str(device.get("id") or ""),
+        )
+        with self._lock:
+            self._files[record.id] = record
+        return record.to_public()
+
+    def _get_registered_file(self, file_id: str, *, auth_key: str = "", token: str = "") -> RemoteFileRecord | None:
+        self._cleanup_files()
+        with self._lock:
+            record = self._files.get(str(file_id or "").strip())
+        if not record:
+            return None
+        if token and hmac.compare_digest(str(token), record.token):
+            return record
+        device = self._authenticate(auth_key)
+        if device and str(device.get("id") or "") == record.owner_device_id:
+            return record
+        return None
+
+    def _cleanup_files(self) -> None:
+        now = time.time()
+        with self._lock:
+            for file_id, record in list(self._files.items()):
+                if now - record.created_at > REMOTE_FILE_TTL_SECONDS:
+                    self._files.pop(file_id, None)
 
     def _authenticate(self, auth_key: str) -> dict[str, Any] | None:
         key_hash = _token_hash(str(auth_key or "").strip())
@@ -512,6 +746,20 @@ class MobileRemoteBridge:
                     query = parse_qs(parsed.query)
                     self._send_json(bridge.pair_status((query.get("requestId") or [""])[0]))
                     return
+                if parsed.path.startswith("/api/files/"):
+                    query = parse_qs(parsed.query)
+                    file_id = unquote(parsed.path.removeprefix("/api/files/")).strip("/")
+                    auth_key = self.headers.get("X-AT-Remote-Key") or ""
+                    auth_header = self.headers.get("Authorization") or ""
+                    if auth_header.lower().startswith("bearer "):
+                        auth_key = auth_header[7:].strip()
+                    token = (query.get("token") or [""])[0]
+                    record = bridge._get_registered_file(file_id, auth_key=auth_key, token=token)
+                    if not record:
+                        self._send_json({"ok": False, "message": "Không tìm thấy tệp hoặc đã hết hạn."}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    self._send_file(record)
+                    return
                 if parsed.path.startswith("/api/"):
                     self._send_json({"ok": False, "message": "Not found"}, status=HTTPStatus.NOT_FOUND)
                     return
@@ -537,11 +785,19 @@ class MobileRemoteBridge:
                         auth_key = auth_header[7:].strip()
                     self._send_json(bridge.handle_command(auth_key, str(body.get("command") or "")))
                     return
+                if parsed.path == "/api/upload":
+                    body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
+                    auth_key = self.headers.get("X-AT-Remote-Key") or ""
+                    auth_header = self.headers.get("Authorization") or ""
+                    if auth_header.lower().startswith("bearer "):
+                        auth_key = auth_header[7:].strip()
+                    self._send_json(bridge.handle_upload(auth_key, body))
+                    return
                 self._send_json({"ok": False, "message": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
-            def _read_json(self) -> dict[str, Any]:
+            def _read_json(self, *, max_bytes: int = 1024 * 1024) -> dict[str, Any]:
                 try:
-                    length = min(int(self.headers.get("Content-Length") or "0"), 1024 * 1024)
+                    length = min(int(self.headers.get("Content-Length") or "0"), max_bytes)
                 except ValueError:
                     length = 0
                 raw = self.rfile.read(length) if length else b"{}"
@@ -558,6 +814,28 @@ class MobileRemoteBridge:
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
+
+            def _send_file(self, record: RemoteFileRecord) -> None:
+                path = Path(record.path)
+                if not path.exists() or not path.is_file():
+                    self._send_json({"ok": False, "message": "Tệp không còn tồn tại trên máy tính."}, status=HTTPStatus.NOT_FOUND)
+                    return
+                try:
+                    size = path.stat().st_size
+                except Exception:
+                    self._send_json({"ok": False, "message": "Không đọc được tệp."}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", record.mime or "application/octet-stream")
+                self.send_header("Content-Length", str(size))
+                self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(record.name)}")
+                self.end_headers()
+                with path.open("rb") as handle:
+                    while True:
+                        chunk = handle.read(1024 * 256)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
 
             def _serve_static(self, request_path: str) -> None:
                 root = _at_remote_dist_dir()
@@ -678,15 +956,21 @@ def _mobile_button_label(label: str) -> str:
     return _mobile_text(text)
 
 
-def mobile_payload_from_result(result: ActionResult) -> dict[str, Any]:
-    cards = _cards_from_result(result)
+def mobile_payload_from_result(
+    result: ActionResult,
+    *,
+    file_resolver: Callable[[str | Path, str], dict[str, Any] | None] | None = None,
+) -> dict[str, Any]:
+    cards = _cards_from_result(result, file_resolver=file_resolver)
     buttons = _buttons_from_result(result)
+    files = _files_from_result(result, file_resolver=file_resolver)
     return {
         "ok": result.status != ActionStatus.ERROR,
         "status": result.status.value,
         "message": _friendly_message(result),
         "cards": cards,
         "buttons": buttons,
+        "files": files,
         "requiresConfirmation": result.status == ActionStatus.NEED_CONFIRM,
         "raw": {
             "status": result.status.value,
@@ -704,6 +988,8 @@ def _friendly_message(result: ActionResult) -> str:
         return "Trạng thái máy đã cập nhật."
     if data.get("telegram_photo_path") or data.get("image_path"):
         return "Đã tạo ảnh kết quả."
+    if data.get("telegram_document_path") or data.get("mobile_uploaded_file"):
+        return "Tệp đã sẵn sàng."
     if data.get("password"):
         return "Đã tạo mật khẩu."
     if data.get("hex") or data.get("base64"):
@@ -713,7 +999,11 @@ def _friendly_message(result: ActionResult) -> str:
     return _mobile_text(result.message) or "Đã xong."
 
 
-def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
+def _cards_from_result(
+    result: ActionResult,
+    *,
+    file_resolver: Callable[[str | Path, str], dict[str, Any] | None] | None = None,
+) -> list[dict[str, Any]]:
     data = result.data if isinstance(result.data, dict) else {}
     cards: list[dict[str, Any]] = []
 
@@ -743,9 +1033,13 @@ def _cards_from_result(result: ActionResult) -> list[dict[str, Any]]:
         choices = [str(item) for item in list(data.get("choices") or [])]
         return [{"type": "choice", "title": "Chọn một mục", "message": _mobile_text(result.message), "choices": choices}]
 
-    image_card = _image_card_from_data(data, result.message)
+    image_card = _image_card_from_data(data, result.message, file_resolver=file_resolver)
     if image_card:
         cards.append(image_card)
+
+    document_card = _document_card_from_data(data, result.message, file_resolver=file_resolver)
+    if document_card:
+        cards.append(document_card)
 
     if data.get("mailbox_address"):
         cards.append(
@@ -846,13 +1140,59 @@ def _buttons_from_result(result: ActionResult) -> list[dict[str, Any]]:
     return buttons
 
 
-def _image_card_from_data(data: dict[str, Any], message: str) -> dict[str, Any] | None:
+def _files_from_result(
+    result: ActionResult,
+    *,
+    file_resolver: Callable[[str | Path, str], dict[str, Any] | None] | None = None,
+) -> list[dict[str, Any]]:
+    if not file_resolver or not isinstance(result.data, dict):
+        return []
+    files: list[dict[str, Any]] = []
+    for key, kind in (
+        ("telegram_photo_path", "image"),
+        ("image_path", "image"),
+        ("telegram_document_path", "file"),
+        ("mobile_uploaded_file", "upload"),
+        ("path", "file"),
+    ):
+        value = str(result.data.get(key) or "").strip()
+        if not value:
+            continue
+        public = file_resolver(value, kind)
+        if public and not any(item.get("id") == public.get("id") for item in files):
+            files.append(public)
+    return files
+
+
+def _image_card_from_data(
+    data: dict[str, Any],
+    message: str,
+    *,
+    file_resolver: Callable[[str | Path, str], dict[str, Any] | None] | None = None,
+) -> dict[str, Any] | None:
     path = str(data.get("telegram_photo_path") or data.get("image_path") or "").strip()
     if not path:
         return None
     file_path = Path(path)
     if not file_path.exists() or not file_path.is_file():
         return None
+    public_file = file_resolver(file_path, "image") if file_resolver else None
+    if public_file:
+        return {
+            "type": "image",
+            "title": "Ảnh kết quả",
+            "message": _mobile_text(message),
+            "file": public_file,
+            "image": {
+                "src": public_file.get("downloadUrl") or "",
+                "downloadUrl": public_file.get("downloadUrl") or "",
+                "name": public_file.get("name") or file_path.name,
+                "mime": public_file.get("mime") or "image/png",
+                "size": public_file.get("size") or 0,
+                "alt": "Kết quả",
+            },
+            "caption": str(data.get("qr_text") or data.get("url") or ""),
+        }
     try:
         if file_path.stat().st_size > MAX_IMAGE_EMBED_BYTES:
             return None
@@ -872,10 +1212,37 @@ def _image_card_from_data(data: dict[str, Any], message: str) -> dict[str, Any] 
     }
 
 
+def _document_card_from_data(
+    data: dict[str, Any],
+    message: str,
+    *,
+    file_resolver: Callable[[str | Path, str], dict[str, Any] | None] | None = None,
+) -> dict[str, Any] | None:
+    if not file_resolver:
+        return None
+    path = str(data.get("telegram_document_path") or data.get("mobile_uploaded_file") or "").strip()
+    if not path:
+        path = str(data.get("path") or "").strip()
+    if not path:
+        return None
+    file_path = Path(path)
+    if not file_path.exists() or not file_path.is_file():
+        return None
+    public_file = file_resolver(file_path, "file")
+    if not public_file:
+        return None
+    return {
+        "type": "file",
+        "title": "Tệp",
+        "message": _mobile_text(message),
+        "file": public_file,
+    }
+
+
 def _safe_mobile_data(data: dict[str, Any]) -> dict[str, Any]:
     safe: dict[str, Any] = {}
     for key, value in (data or {}).items():
-        if key in {"telegram_photo_path", "telegram_document_path", "path"}:
+        if key in {"telegram_photo_path", "telegram_document_path", "mobile_uploaded_file", "path"}:
             continue
         if isinstance(value, (str, int, float, bool)) or value is None:
             safe[key] = value

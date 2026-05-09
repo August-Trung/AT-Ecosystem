@@ -5,18 +5,25 @@ import {
   ChevronRight,
   Clipboard,
   Cpu,
+  Download,
+  FileText,
   Hash,
   KeyRound,
   Mail,
   Menu,
   MonitorSmartphone,
+  Paperclip,
   QrCode,
   RefreshCw,
+  RotateCcw,
   Send,
+  Share2,
   ShieldCheck,
   Smartphone,
   WifiOff,
-  X
+  X,
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -30,6 +37,16 @@ type MobileButton = {
   tone?: "danger" | "neutral";
 };
 
+type RemoteFile = {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  sizeLabel?: string;
+  kind?: string;
+  downloadUrl: string;
+};
+
 type MobileCard = {
   type: string;
   title?: string;
@@ -38,7 +55,8 @@ type MobileCard = {
   messages?: Array<Record<string, unknown>>;
   items?: Array<{ label: string; value: string; copy?: boolean }>;
   choices?: string[];
-  image?: { src: string; alt: string };
+  image?: { src: string; alt: string; downloadUrl?: string; name?: string; mime?: string; size?: number };
+  file?: RemoteFile;
   caption?: string;
   tone?: string;
 };
@@ -49,6 +67,7 @@ type CommandResult = {
   message: string;
   cards: MobileCard[];
   buttons: MobileButton[];
+  files?: RemoteFile[];
   requiresConfirmation?: boolean;
 };
 
@@ -81,11 +100,26 @@ type JsonRequestOptions = {
   data?: unknown;
 };
 
+type ImageViewerState = {
+  src: string;
+  title: string;
+  caption?: string;
+  file?: RemoteFile;
+};
+
 const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+const absoluteRemoteUrl = (baseUrl: string, url: string) => {
+  const value = String(url || "").trim();
+  if (!value) return "";
+  if (/^data:/i.test(value) || /^blob:/i.test(value) || /^https?:\/\//i.test(value)) return value;
+  const base = normalizeBaseUrl(baseUrl);
+  return `${base}${value.startsWith("/") ? "" : "/"}${value}`;
+};
 
 const currentLanBaseUrl = () => {
   if (!["http:", "https:"].includes(window.location.protocol)) return "";
@@ -191,6 +225,28 @@ const clearConnection = () => {
 
 const newId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const fileToBase64 = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",", 2)[1] : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("Không đọc được tệp."));
+    reader.readAsDataURL(file);
+  });
+
+const downloadBlob = (blob: Blob, name: string) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name || "at-remote-file";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
+
 function App() {
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl());
   const [deviceName, setDeviceName] = useState(
@@ -206,7 +262,9 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastCommand, setLastCommand] = useState("");
   const [showQuickActions, setShowQuickActions] = useState(true);
+  const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const activeBaseUrl = connection?.baseUrl || baseUrl;
@@ -352,6 +410,115 @@ function App() {
         buttons: [{ label: "Thử lại", command: "__retry__" }]
       }
     ]);
+  };
+
+  const remoteFileUrl = useCallback(
+    (file: RemoteFile) => absoluteRemoteUrl(connection?.baseUrl || baseUrl, file.downloadUrl),
+    [baseUrl, connection]
+  );
+
+  const fetchRemoteFile = useCallback(
+    async (file: RemoteFile) => {
+      const url = remoteFileUrl(file);
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error("Không tải được tệp từ máy tính.");
+      return response.blob();
+    },
+    [remoteFileUrl]
+  );
+
+  const downloadRemoteFile = useCallback(
+    async (file: RemoteFile) => {
+      try {
+        const blob = await fetchRemoteFile(file);
+        downloadBlob(blob, file.name);
+      } catch {
+        const url = remoteFileUrl(file);
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      }
+    },
+    [fetchRemoteFile, remoteFileUrl]
+  );
+
+  const shareRemoteFile = useCallback(
+    async (file: RemoteFile) => {
+      try {
+        const blob = await fetchRemoteFile(file);
+        const sharedFile = new File([blob], file.name, { type: file.mime || blob.type || "application/octet-stream" });
+        const shareData = { title: file.name, files: [sharedFile] };
+        if (navigator.canShare?.(shareData)) {
+          await navigator.share(shareData);
+          return;
+        }
+        await navigator.share?.({ title: file.name, text: file.name });
+        downloadBlob(blob, file.name);
+      } catch {
+        await downloadRemoteFile(file);
+      }
+    },
+    [downloadRemoteFile, fetchRemoteFile]
+  );
+
+  const openRemoteFile = useCallback(
+    (file: RemoteFile) => {
+      const url = remoteFileUrl(file);
+      if (url) window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [remoteFileUrl]
+  );
+
+  const uploadFile = async (file: File, command: string) => {
+    if (!connection) {
+      setStep("connect");
+      return;
+    }
+    setBusy(true);
+    setDraft("");
+    setLastCommand(command.trim());
+    setMessages((current) => [
+      ...current,
+      {
+        id: newId(),
+        role: "user",
+        text: command.trim() ? `${command.trim()}\nTệp: ${file.name}` : `Gửi tệp: ${file.name}`
+      }
+    ]);
+    try {
+      const dataBase64 = await fileToBase64(file);
+      const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/upload`, {
+        method: "POST",
+        headers: {
+          "X-AT-Remote-Key": connection.authKey
+        },
+        data: {
+          name: file.name,
+          mime: file.type || "application/octet-stream",
+          size: file.size,
+          command: command.trim(),
+          dataBase64
+        }
+      });
+      const data = response.data;
+      if (!response.ok || data.status === "unauthorized") throw new Error(friendlyFetchError());
+      setMessages((current) => [
+        ...current,
+        {
+          id: newId(),
+          role: "assistant",
+          text: data.message,
+          cards: data.cards,
+          buttons: data.buttons,
+          status: data.status
+        }
+      ]);
+      setConnectionText("Đã kết nối");
+    } catch (error) {
+      appendAssistantError(friendlyConnectionError(error));
+      setConnectionText("Mất kết nối");
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   const sendCommand = async (command: string) => {
@@ -549,7 +716,17 @@ function App() {
           messages.map((message) => (
             <article key={message.id} className={`message ${message.role}`}>
               <p className="message-text">{message.text}</p>
-              {message.cards?.map((card, index) => <ResultCard key={`${message.id}-${index}`} card={card} />)}
+              {message.cards?.map((card, index) => (
+                <ResultCard
+                  key={`${message.id}-${index}`}
+                  card={card}
+                  baseUrl={connection?.baseUrl || baseUrl}
+                  onOpenImage={setImageViewer}
+                  onOpenFile={openRemoteFile}
+                  onDownloadFile={downloadRemoteFile}
+                  onShareFile={shareRemoteFile}
+                />
+              ))}
               {message.buttons && message.buttons.length > 0 ? (
                 <div className="result-actions">
                   {message.buttons.map((button) => (
@@ -572,6 +749,15 @@ function App() {
       </section>
 
       <form className="composer" onSubmit={onSubmitCommand}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void uploadFile(file, draft);
+          }}
+        />
         <button
           type="button"
           className="icon-button"
@@ -582,6 +768,15 @@ function App() {
           aria-label={draft.trim() ? "Xóa nội dung" : "Nút nhanh"}
         >
           {draft.trim() ? <X size={18} /> : <Menu size={19} />}
+        </button>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={busy}
+          aria-label="Đính kèm tệp"
+        >
+          <Paperclip size={18} />
         </button>
         <textarea
           ref={inputRef}
@@ -599,17 +794,73 @@ function App() {
       <button className="disconnect" onClick={disconnect}>
         Đổi máy tính
       </button>
+
+      {imageViewer ? (
+        <ImageViewer
+          viewer={imageViewer}
+          baseUrl={connection?.baseUrl || baseUrl}
+          onClose={() => setImageViewer(null)}
+          onDownload={downloadRemoteFile}
+          onShare={shareRemoteFile}
+        />
+      ) : null}
     </main>
   );
 }
 
-function ResultCard({ card }: { card: MobileCard }) {
+function ResultCard({
+  card,
+  baseUrl,
+  onOpenImage,
+  onOpenFile,
+  onDownloadFile,
+  onShareFile
+}: {
+  card: MobileCard;
+  baseUrl: string;
+  onOpenImage: (viewer: ImageViewerState) => void;
+  onOpenFile: (file: RemoteFile) => void;
+  onDownloadFile: (file: RemoteFile) => void;
+  onShareFile: (file: RemoteFile) => void;
+}) {
   if (card.type === "image" && card.image) {
+    const imageSrc = absoluteRemoteUrl(baseUrl, card.image.src);
+    const file = card.file || (card.image.downloadUrl ? {
+      id: card.image.downloadUrl,
+      name: card.image.name || "image.png",
+      mime: card.image.mime || "image/png",
+      size: card.image.size || 0,
+      downloadUrl: card.image.downloadUrl
+    } : undefined);
     return (
       <div className="result-card image-card">
         <h3>{card.title || "Ảnh kết quả"}</h3>
-        <img src={card.image.src} alt={card.image.alt || "Kết quả"} />
+        <button
+          type="button"
+          className="image-preview-button"
+          onClick={() => onOpenImage({ src: imageSrc, title: card.title || "Ảnh kết quả", caption: card.caption, file })}
+        >
+          <img src={imageSrc} alt={card.image.alt || "Kết quả"} />
+        </button>
         {card.caption ? <p>{card.caption}</p> : null}
+        {file ? <FileActions file={file} onOpen={onOpenFile} onDownload={onDownloadFile} onShare={onShareFile} /> : null}
+      </div>
+    );
+  }
+
+  if (card.type === "file" && card.file) {
+    return (
+      <div className="result-card file-card">
+        <div className="card-title-row">
+          <FileText size={18} />
+          <h3>{card.title || "Tệp"}</h3>
+        </div>
+        <p>{card.message || "Tệp đã sẵn sàng."}</p>
+        <div className="file-summary">
+          <strong>{card.file.name}</strong>
+          <span>{card.file.sizeLabel || `${card.file.size || 0} B`}</span>
+        </div>
+        <FileActions file={card.file} onOpen={onOpenFile} onDownload={onDownloadFile} onShare={onShareFile} />
       </div>
     );
   }
@@ -695,6 +946,128 @@ function ResultCard({ card }: { card: MobileCard }) {
     <div className={`result-card ${card.type === "error" ? "error-card" : ""}`}>
       <h3>{card.title || "Kết quả"}</h3>
       <p>{card.message}</p>
+    </div>
+  );
+}
+
+function FileActions({
+  file,
+  onOpen,
+  onDownload,
+  onShare
+}: {
+  file: RemoteFile;
+  onOpen: (file: RemoteFile) => void;
+  onDownload: (file: RemoteFile) => void;
+  onShare: (file: RemoteFile) => void;
+}) {
+  return (
+    <div className="file-actions">
+      <button type="button" className="secondary-button" onClick={() => onOpen(file)}>
+        <FileText size={16} />
+        Mở
+      </button>
+      <button type="button" className="secondary-button" onClick={() => onDownload(file)}>
+        <Download size={16} />
+        Tải về
+      </button>
+      <button type="button" className="secondary-button" onClick={() => onShare(file)}>
+        <Share2 size={16} />
+        Chia sẻ
+      </button>
+    </div>
+  );
+}
+
+function ImageViewer({
+  viewer,
+  baseUrl,
+  onClose,
+  onDownload,
+  onShare
+}: {
+  viewer: ImageViewerState;
+  baseUrl: string;
+  onClose: () => void;
+  onDownload: (file: RemoteFile) => void;
+  onShare: (file: RemoteFile) => void;
+}) {
+  const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
+  const pinchRef = useRef<{ distance: number; scale: number } | null>(null);
+  const src = absoluteRemoteUrl(baseUrl, viewer.src);
+  const zoom = (delta: number) => setScale((value) => Math.min(4, Math.max(0.5, Number((value + delta).toFixed(2)))));
+  const pinchDistance = (touches: any) => {
+    const first = touches[0];
+    const second = touches[1];
+    return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+  };
+  const reset = () => {
+    setScale(1);
+    setRotation(0);
+  };
+
+  return (
+    <div className="viewer-backdrop" role="dialog" aria-modal="true">
+      <div className="viewer-top">
+        <button type="button" className="icon-button" onClick={onClose} aria-label="Đóng">
+          <X size={20} />
+        </button>
+        <div>
+          <strong>{viewer.title}</strong>
+          {viewer.caption ? <span>{viewer.caption}</span> : null}
+        </div>
+      </div>
+      <div
+        className="viewer-stage"
+        onTouchStart={(event) => {
+          if (event.touches.length === 2) {
+            pinchRef.current = { distance: pinchDistance(event.touches), scale };
+          }
+        }}
+        onTouchMove={(event) => {
+          if (event.touches.length === 2 && pinchRef.current) {
+            event.preventDefault();
+            const next = pinchRef.current.scale * (pinchDistance(event.touches) / pinchRef.current.distance);
+            setScale(Math.min(4, Math.max(0.5, Number(next.toFixed(2)))));
+          }
+        }}
+        onTouchEnd={() => {
+          pinchRef.current = null;
+        }}
+      >
+        <img
+          src={src}
+          alt={viewer.title}
+          style={{ transform: `scale(${scale}) rotate(${rotation}deg)` }}
+          onDoubleClick={() => setScale((value) => (value >= 2 ? 1 : 2))}
+          draggable={false}
+        />
+      </div>
+      <div className="viewer-controls">
+        <button type="button" onClick={() => zoom(0.25)} aria-label="Phóng to">
+          <ZoomIn size={18} />
+        </button>
+        <button type="button" onClick={() => zoom(-0.25)} aria-label="Thu nhỏ">
+          <ZoomOut size={18} />
+        </button>
+        <button type="button" onClick={() => setRotation((value) => value + 90)} aria-label="Xoay">
+          <RotateCcw size={18} />
+        </button>
+        <button type="button" onClick={reset}>
+          Đặt lại
+        </button>
+        {viewer.file ? (
+          <>
+            <button type="button" onClick={() => onDownload(viewer.file as RemoteFile)} aria-label="Tải về">
+              <Download size={18} />
+            </button>
+            <button type="button" onClick={() => onShare(viewer.file as RemoteFile)} aria-label="Chia sẻ">
+              <Share2 size={18} />
+            </button>
+          </>
+        ) : null}
+      </div>
     </div>
   );
 }
