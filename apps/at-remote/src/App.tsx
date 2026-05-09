@@ -1,3 +1,4 @@
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import {
   BatteryCharging,
   Check,
@@ -73,6 +74,12 @@ type QuickAction = {
   suffix?: string;
 };
 
+type JsonRequestOptions = {
+  method?: "GET" | "POST";
+  headers?: Record<string, string>;
+  data?: unknown;
+};
+
 const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
@@ -103,6 +110,64 @@ const defaultBaseUrl = () => {
 
 const friendlyFetchError = () =>
   "Không kết nối được với máy tính. Máy tính chưa bật ATAssistant hoặc điện thoại và máy tính chưa cùng WiFi.";
+
+const isConnectionErrorMessage = (message: string) =>
+  /failed to fetch|load failed|networkerror|network error|offline|timeout|timed out|cleartext|econn|java\.net|failed to connect|unable to resolve/i.test(
+    message
+  );
+
+const friendlyConnectionError = (error: unknown) => {
+  if (!(error instanceof Error)) return friendlyFetchError();
+  const message = String(error.message || "").trim();
+  if (!message || isConnectionErrorMessage(message)) return friendlyFetchError();
+  return message;
+};
+
+const parseJsonData = <T,>(value: unknown): T => {
+  if (typeof value !== "string") return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return value as T;
+  }
+};
+
+const requestJson = async <T,>(url: string, options: JsonRequestOptions = {}) => {
+  const method = options.method || "GET";
+  const headers: Record<string, string> = { ...(options.headers || {}) };
+  if (method !== "GET" && options.data !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  if (Capacitor.isNativePlatform()) {
+    const response = await CapacitorHttp.request({
+      url,
+      method,
+      headers,
+      data: options.data,
+      responseType: "json",
+      connectTimeout: 5000,
+      readTimeout: 20000
+    });
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      data: parseJsonData<T>(response.data)
+    };
+  }
+
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: options.data === undefined ? undefined : JSON.stringify(options.data),
+    cache: "no-store"
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    data: (await response.json()) as T
+  };
+};
 
 const readSavedConnection = (): SavedConnection | null => {
   try {
@@ -153,7 +218,7 @@ function App() {
       return;
     }
     try {
-      const response = await fetch(`${activeBaseUrl}/api/health`, { cache: "no-store" });
+      const response = await requestJson<Record<string, unknown>>(`${activeBaseUrl}/api/health`);
       if (!response.ok) throw new Error("offline");
       setConnectionText(connection ? "Đã kết nối" : "Kết nối với máy tính");
       setStep(connection ? "connected" : "connect");
@@ -178,11 +243,10 @@ function App() {
     if (step !== "pending" || !pairRequestId) return;
     const id = window.setInterval(async () => {
       try {
-        const response = await fetch(
-          `${baseUrl}/api/pair/status?requestId=${encodeURIComponent(pairRequestId)}`,
-          { cache: "no-store" }
+        const response = await requestJson<Record<string, unknown>>(
+          `${baseUrl}/api/pair/status?requestId=${encodeURIComponent(pairRequestId)}`
         );
-        const data = await response.json();
+        const data = response.data;
         if (data.status === "approved" && data.authKey) {
           const saved = { baseUrl, authKey: data.authKey as string, deviceName };
           saveConnection(saved);
@@ -228,18 +292,17 @@ function App() {
     localStorage.setItem(DEVICE_NAME_KEY, deviceName.trim() || "Điện thoại");
     setBusy(true);
     try {
-      const response = await fetch(`${cleanBase}/api/pair/request`, {
+      const response = await requestJson<Record<string, unknown>>(`${cleanBase}/api/pair/request`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceName, pairCode })
+        data: { deviceName, pairCode }
       });
-      const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.message || friendlyFetchError());
-      setPairRequestId(data.requestId);
+      const data = response.data;
+      if (!response.ok || !data.ok) throw new Error(String(data.message || friendlyFetchError()));
+      setPairRequestId(String(data.requestId || ""));
       setStep("pending");
       setConnectionText("Đang chờ xác nhận trên ATAssistant");
     } catch (error) {
-      setConnectionText(error instanceof Error ? error.message : friendlyFetchError());
+      setConnectionText(friendlyConnectionError(error));
       setStep("connect");
     } finally {
       setBusy(false);
@@ -283,15 +346,14 @@ function App() {
     setMessages((current) => [...current, { id: newId(), role: "user", text: clean }]);
     setBusy(true);
     try {
-      const response = await fetch(`${connection.baseUrl}/api/command`, {
+      const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/command`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
           "X-AT-Remote-Key": connection.authKey
         },
-        body: JSON.stringify({ command: clean })
+        data: { command: clean }
       });
-      const data = (await response.json()) as CommandResult;
+      const data = response.data;
       if (!response.ok || data.status === "unauthorized") {
         throw new Error(friendlyFetchError());
       }
@@ -308,7 +370,7 @@ function App() {
       ]);
       setConnectionText("Đã kết nối");
     } catch (error) {
-      appendAssistantError(error instanceof Error ? error.message : friendlyFetchError());
+      appendAssistantError(friendlyConnectionError(error));
       setConnectionText("Mất kết nối");
     } finally {
       setBusy(false);
