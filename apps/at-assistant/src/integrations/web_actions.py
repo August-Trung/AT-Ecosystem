@@ -207,12 +207,28 @@ def invoke_web_action(
     route = str(args.pop("route", "") or action.get("route") or "/")
     url = _build_invocation_url(_base_url(app_id, manifest), route, action_id, args)
 
-    if (delivery or "").strip().lower() == "telegram":
+    delivery_key = (delivery or "").strip().lower()
+
+    if delivery_key in {"telegram", "mobile"}:
         native = handle_native_mmo_action(action_id, args)
         if native is not None:
             if isinstance(native.data, dict):
                 native.data.setdefault("url", url)
             return native
+        if delivery_key == "mobile":
+            return ActionResult.ok(
+                f"Công cụ này cần mở trên máy tính: {action.get('title') or action_id}.",
+                app_id=app_id,
+                action_id=action_id,
+                route=route,
+                url=url,
+                mobile_buttons=[
+                    {
+                        "text": "Mở trên máy tính",
+                        "url": url,
+                    }
+                ],
+            )
         return ActionResult.ok(
             f"Tool này chưa có native Telegram handler. Bấm nút để mở {action.get('title') or action_id}.",
             app_id=app_id,

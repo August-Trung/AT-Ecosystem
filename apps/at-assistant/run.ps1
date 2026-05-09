@@ -33,6 +33,7 @@ function Show-Help {
     Write-Host ""
     Write-Host "Usage:"
     Write-Host "  .\run.ps1 app       Start the desktop app"
+    Write-Host "  .\run.ps1 remote    Start AT Remote LAN bridge without the desktop window"
     Write-Host "  .\run.ps1 check     Run NLU stress + regression + intent + slot checks"
     Write-Host "  .\run.ps1 train     Safe auto-label, train, evaluate, and promote NLU model"
     Write-Host "  .\run.ps1 test      Run all pytest tests"
@@ -57,6 +58,9 @@ function Invoke-NluCheck {
 switch ($Command.ToLowerInvariant()) {
     "app" {
         Run-Step "Desktop app" @("-m", "src.gui.main_gui")
+    }
+    "remote" {
+        Run-Step "AT Remote LAN bridge" @("-m", "src.cli.remote_server")
     }
     "check" {
         Invoke-NluCheck

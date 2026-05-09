@@ -3,6 +3,7 @@
 | App | Domain | Original source | Notes |
 | --- | --- | --- | --- |
 | `at-assistant` | core | `D:\Study\Projects\Python project\ATAssistant` | Python app, synced after commit `e2310a6`. Reinstall from `requirements.txt`. |
+| `at-remote` | local mobile companion | new in this monorepo | React/Vite PWA for Android-first LAN control of ATAssistant. Reinstall from `package-lock.json`. |
 | `arcade-web` | `arcade.augusttrung.com` | `D:\Study\Projects\augusttrung-arcade` | Node app, reinstall from `package-lock.json`. |
 | `atomorrow-web` | `atomorrow.augusttrung.com` | `D:\Study\Projects\another-tomorrow` | Node app, reinstall from `package-lock.json`. |
 | `augustdown-web` | `augustdown.augusttrung.com` | `D:\Study\Projects\augustdown-pro` | Node app, reinstall from `package-lock.json`. |

@@ -57,6 +57,7 @@ from src.core.pin_service import PinService
 from src.gui.factory_reset_dialog import FactoryResetDialog
 from src.gui.system_settings_dialog import SystemSettingsDialog
 from src.gui.telegram_bot_dialog import TelegramBotDialog
+from src.gui.mobile_remote_dialog import MobileRemoteDialog
 from src.gui.custom_apps_dialog import CustomAppsDialog
 from src.gui.email_auto_check_dialog import EmailAutoCheckDialog
 from src.plugins.email_summarizer import EmailSummarizer
@@ -72,6 +73,7 @@ from src.plugins.custom_app_service import CustomAppService
 from src.plugins.email_auto_check_service import EmailAutoCheckService
 from src.integrations.telegram_bot import TelegramBotBridge, TelegramBotConfig, format_result_for_telegram
 from src.integrations.telegram_settings import TelegramSettingsStore
+from src.integrations.mobile_remote import MobileRemoteBridge, MobileRemoteSettingsStore
 
 from src.gui.theme import (
     BG_PRIMARY,
@@ -215,6 +217,11 @@ class ATAssistantApp(ctk.CTk):
         self._telegram_bridge_thread: threading.Thread | None = None
         self._telegram_bridge_stop: threading.Event | None = None
         self._telegram_bridge_config_key = ""
+        self._mobile_remote_dialog: MobileRemoteDialog | None = None
+        self._mobile_remote_bridge = MobileRemoteBridge(
+            self.engine,
+            on_event=self._handle_mobile_remote_event,
+        )
         self._upcoming_task_labels: list[ctk.CTkLabel] = []
         self._workflow_service = WorkflowService()
         self._email_auto_check_service = EmailAutoCheckService()
@@ -251,6 +258,7 @@ class ATAssistantApp(ctk.CTk):
         self._poll_internal_scheduled_tasks()
         self._safe_after(1500, self._start_voice_background_services)
         self._safe_after(2000, self._start_telegram_bridge_from_settings)
+        self._safe_after(2300, self._start_mobile_remote_from_settings)
 
         # ─── Welcome message ───
         self._start_new_chat_session(show_notice=False)
@@ -1767,6 +1775,16 @@ class ATAssistantApp(ctk.CTk):
             return "Telegram bot: thiếu allowlist user/chat"
         return f"Telegram bot: {bot_name or 'đã cấu hình'}"
 
+    def _get_mobile_remote_hub_summary(self) -> str:
+        try:
+            snapshot = self._mobile_remote_bridge.snapshot()
+        except Exception:
+            return "Kết nối điện thoại: chưa sẵn sàng"
+        if not snapshot.get("running"):
+            return "Kết nối điện thoại: đang tắt"
+        count = len(snapshot.get("devices") or [])
+        return f"Kết nối điện thoại: đang bật, {count} thiết bị"
+
     def _build_system_settings_hub_sections(self) -> list[dict]:
         return [
             {
@@ -1821,6 +1839,12 @@ class ATAssistantApp(ctk.CTk):
                 "title": "Thiết bị & ứng dụng",
                 "description": "Những thành phần gắn với máy hiện tại như voice offline, startup và app tùy chỉnh.",
                 "items": [
+                    {
+                        "title": "Kết nối điện thoại",
+                        "summary": self._get_mobile_remote_hub_summary(),
+                        "button_text": "Mở kết nối",
+                        "command": self._open_mobile_remote_dialog,
+                    },
                     {
                         "title": "Gói giọng nói offline",
                         "summary": self._get_voice_package_hub_summary(),
@@ -1913,6 +1937,39 @@ class ATAssistantApp(ctk.CTk):
         )
         dialog.bind("<Destroy>", self._on_telegram_bot_dialog_destroy, add="+")
         self._telegram_bot_dialog = dialog
+
+    def _open_mobile_remote_dialog(self) -> None:
+        if (
+            self._mobile_remote_dialog is not None
+            and self._mobile_remote_dialog.winfo_exists()
+        ):
+            self._mobile_remote_dialog.focus()
+            self._mobile_remote_dialog.lift()
+            return
+        dialog = MobileRemoteDialog(
+            self,
+            palette=self._palette,
+            bridge=self._mobile_remote_bridge,
+            on_message=lambda message, style="normal": self.chat.add_bot_message(
+                message, style=style
+            ),
+            on_changed=self._refresh_mobile_remote_settings_hub,
+        )
+        dialog.bind("<Destroy>", self._on_mobile_remote_dialog_destroy, add="+")
+        self._mobile_remote_dialog = dialog
+
+    def _on_mobile_remote_dialog_destroy(self, event=None) -> None:
+        widget = getattr(event, "widget", None)
+        if widget is self._mobile_remote_dialog:
+            self._mobile_remote_dialog = None
+            self._maybe_reopen_system_settings_hub()
+
+    def _refresh_mobile_remote_settings_hub(self) -> None:
+        if (
+            self._system_settings_dialog is not None
+            and self._system_settings_dialog.winfo_exists()
+        ):
+            return
 
     def _on_telegram_bot_dialog_destroy(self, event=None) -> None:
         widget = getattr(event, "widget", None)
@@ -2063,6 +2120,51 @@ class ATAssistantApp(ctk.CTk):
         self._telegram_bridge_stop = None
         self._telegram_bridge_thread = None
         self._telegram_bridge_config_key = ""
+
+    def _start_mobile_remote_from_settings(self) -> None:
+        if self._is_quitting:
+            return
+        try:
+            settings = MobileRemoteSettingsStore().load()
+        except Exception:
+            return
+        if not bool(settings.get("enabled", False)):
+            return
+        try:
+            self._mobile_remote_bridge.start(
+                host=str(settings.get("host") or "0.0.0.0"),
+                port=int(settings.get("port") or 8765),
+            )
+        except Exception as exc:
+            self.chat.add_bot_message(
+                f"Không bật được kết nối điện thoại: {exc}", style="error"
+            )
+
+    def _stop_mobile_remote_bridge(self) -> None:
+        try:
+            self._mobile_remote_bridge.stop()
+        except Exception:
+            pass
+
+    def _handle_mobile_remote_event(self, event: str, payload: dict) -> None:
+        def append() -> None:
+            if event == "started":
+                urls = payload.get("urls") or []
+                url_text = str(urls[0]) if urls else ""
+                self.chat.add_system_message(
+                    f"Kết nối điện thoại đang bật. Mở AT Remote trên điện thoại: {url_text}"
+                )
+            elif event == "pair_requested":
+                name = payload.get("deviceName") or "Điện thoại"
+                self.chat.add_system_message(
+                    f"{name} đang chờ xác nhận trong Kết nối điện thoại."
+                )
+            elif event == "pair_approved":
+                self.chat.add_system_message(
+                    f"Đã kết nối điện thoại: {payload.get('name') or 'Thiết bị'}."
+                )
+
+        self._safe_after(0, append)
 
     def _on_custom_apps_dialog_destroy(self, event=None) -> None:
         widget = getattr(event, "widget", None)
@@ -2778,6 +2880,7 @@ class ATAssistantApp(ctk.CTk):
             return
         self._is_quitting = True
         self._stop_telegram_bridge()
+        self._stop_mobile_remote_bridge()
         self._cancel_pending_afters()
         self._wakeword_runtime.stop()
         if (
@@ -2794,6 +2897,14 @@ class ATAssistantApp(ctk.CTk):
         ):
             try:
                 self._system_settings_dialog.destroy()
+            except Exception:
+                pass
+        if (
+            self._mobile_remote_dialog is not None
+            and self._mobile_remote_dialog.winfo_exists()
+        ):
+            try:
+                self._mobile_remote_dialog.destroy()
             except Exception:
                 pass
         if (
