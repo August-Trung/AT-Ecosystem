@@ -7,7 +7,12 @@ import webbrowser
 
 import customtkinter as ctk
 
-from src.core.app_paths import ensure_app_data_dir
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover
+    Image = None
+
+from src.core.app_paths import ensure_app_data_dir, resource_path
 from src.gui.theme import FONT_FAMILY, FONT_SIZE_NORMAL, FONT_SIZE_SMALL, FONT_SIZE_TITLE
 from src.integrations.mobile_remote import (
     DEFAULT_REMOTE_PORT,
@@ -60,6 +65,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self._last_pending_signature = ""
         self._last_devices_signature = ""
         self._permission_vars: list[ctk.BooleanVar] = []
+        self._logo_image = self._load_logo_image()
 
         settings = self._store.load()
         ui = self._palette
@@ -85,15 +91,26 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         header.grid_columnconfigure(1, weight=1)
 
-        mark = ctk.CTkFrame(header, width=52, height=52, fg_color=ui["ACCENT"], corner_radius=8)
+        mark = ctk.CTkFrame(
+            header,
+            width=52,
+            height=52,
+            fg_color="#fffaf7",
+            border_width=1,
+            border_color="#ffd2c4",
+            corner_radius=8,
+        )
         mark.grid(row=0, column=0, sticky="nw", padx=(0, 12))
         mark.grid_propagate(False)
-        ctk.CTkLabel(
-            mark,
-            text="AT",
-            font=(FONT_FAMILY, 18, "bold"),
-            text_color="#ffffff",
-        ).place(relx=0.5, rely=0.5, anchor="center")
+        if self._logo_image is not None:
+            ctk.CTkLabel(mark, text="", image=self._logo_image).place(relx=0.5, rely=0.5, anchor="center")
+        else:
+            ctk.CTkLabel(
+                mark,
+                text="AT",
+                font=(FONT_FAMILY, 18, "bold"),
+                text_color=ui["ACCENT"],
+            ).place(relx=0.5, rely=0.5, anchor="center")
 
         title_box = ctk.CTkFrame(header, fg_color="transparent")
         title_box.grid(row=0, column=1, sticky="ew")
@@ -236,6 +253,15 @@ class MobileRemoteDialog(ctk.CTkToplevel):
 
         self._refresh()
         self.after(1000, self._poll)
+
+    def _load_logo_image(self):
+        if Image is None:
+            return None
+        try:
+            image = Image.open(resource_path("assests", "icon_64.png")).convert("RGBA")
+            return ctk.CTkImage(light_image=image.copy(), dark_image=image.copy(), size=(34, 34))
+        except Exception:
+            return None
 
     def _button(self, parent, text: str, command, column: int, *, tone: str) -> None:
         ui = self._palette

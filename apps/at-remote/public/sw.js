@@ -1,5 +1,12 @@
-const CACHE_NAME = "at-remote-v2";
-const PRECACHE_URLS = ["/icon.svg", "/manifest.webmanifest"];
+const CACHE_NAME = "at-remote-v3";
+const PRECACHE_URLS = [
+  "/brand-logo.png",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/maskable-icon-512.png",
+  "/apple-touch-icon.png",
+  "/manifest.webmanifest"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

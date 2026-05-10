@@ -104,35 +104,25 @@ button:disabled {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  grid-template-columns: 1fr;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--teal), var(--blue));
-  color: #ffffff;
-  box-shadow: 0 10px 24px rgba(255, 90, 61, 0.26);
-  position: relative;
+  background: #fffaf7;
+  border: 1px solid rgba(255, 90, 61, 0.18);
+  box-shadow: 0 10px 24px rgba(21, 19, 33, 0.1);
+  padding: 6px;
 }
 
-.brand-mark span {
-  font-weight: 900;
-  font-size: 1rem;
-  letter-spacing: 0;
-}
-
-.brand-mark svg {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  opacity: 0.78;
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .brand-mark.small {
   width: 38px;
   height: 38px;
-  box-shadow: none;
-}
-
-.brand-mark.small svg {
-  display: none;
+  padding: 5px;
+  box-shadow: 0 6px 16px rgba(21, 19, 33, 0.08);
 }
 
 .connect-card h1,

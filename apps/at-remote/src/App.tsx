@@ -153,6 +153,7 @@ type PermissionGroup = {
 const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
+const BRAND_LOGO_SRC = "/brand-logo.png";
 const CHAT_HISTORY_PREFIX = "atRemoteChatHistory:";
 const MAX_STORED_MESSAGES = 120;
 
@@ -1088,8 +1089,7 @@ function App() {
           <div className="connect-top">
             <div className="brand-lockup">
               <div className="brand-mark">
-                <span>AT</span>
-                <MonitorSmartphone size={20} />
+                <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" />
               </div>
               <div>
                 <p className="eyebrow">AT Remote</p>
@@ -1187,7 +1187,7 @@ function App() {
       <header className="top-bar">
         <div className="top-brand">
           <div className="brand-mark small">
-            <span>AT</span>
+            <img src={BRAND_LOGO_SRC} alt="" aria-hidden="true" />
           </div>
           <div>
             <p className="eyebrow">AT Remote</p>
