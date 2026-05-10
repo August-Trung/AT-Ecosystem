@@ -5,6 +5,7 @@ const PRECACHE_URLS = [
   "/icon-512.png",
   "/maskable-icon-512.png",
   "/apple-touch-icon.png",
+  "/splash-mobile.webp",
   "/manifest.webmanifest"
 ];
 

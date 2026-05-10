@@ -154,8 +154,11 @@ const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
 const BRAND_LOGO_SRC = "/brand-logo.png";
+const BRAND_SPLASH_SRC = "/splash-mobile.webp";
 const CHAT_HISTORY_PREFIX = "atRemoteChatHistory:";
 const MAX_STORED_MESSAGES = 120;
+const BRAND_INTRO_HOLD_MS = 920;
+const BRAND_INTRO_FADE_MS = 260;
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -424,6 +427,8 @@ function App() {
   const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
   const [view, setView] = useState<AppView>("chat");
   const [discovering, setDiscovering] = useState(false);
+  const [showBrandIntro, setShowBrandIntro] = useState(true);
+  const [brandIntroLeaving, setBrandIntroLeaving] = useState(false);
   const [discoveredComputers, setDiscoveredComputers] = useState<DiscoveredComputer[]>([]);
   const [uploads, setUploads] = useState<RemoteFile[]>([]);
   const [uploadsBusy, setUploadsBusy] = useState(false);
@@ -445,6 +450,15 @@ function App() {
   useEffect(() => {
     stepRef.current = step;
   }, [step]);
+
+  useEffect(() => {
+    const leavingId = window.setTimeout(() => setBrandIntroLeaving(true), BRAND_INTRO_HOLD_MS);
+    const doneId = window.setTimeout(() => setShowBrandIntro(false), BRAND_INTRO_HOLD_MS + BRAND_INTRO_FADE_MS);
+    return () => {
+      window.clearTimeout(leavingId);
+      window.clearTimeout(doneId);
+    };
+  }, []);
 
   const activeBaseUrl = connection?.baseUrl || baseUrl;
   const statusTone =
@@ -1082,8 +1096,12 @@ function App() {
 
   const viewTitle = view === "files" ? "Tệp đã gửi" : view === "permissions" ? "Quyền điều khiển" : "Kết quả";
 
+  const brandIntro = showBrandIntro ? <BrandIntro leaving={brandIntroLeaving} /> : null;
+  const discoveryOverlay = discovering && step !== "connected" ? <DiscoveryOverlay /> : null;
+
   if (step !== "connected") {
     return (
+      <>
       <main className="connect-page">
         <section className="connect-card">
           <div className="connect-top">
@@ -1178,11 +1196,15 @@ function App() {
             <div><span>3</span><p>Nếu báo mất kết nối, kiểm tra lại địa chỉ đang nhập.</p></div>
           </div>
         </section>
+        {discoveryOverlay}
       </main>
+      {brandIntro}
+      </>
     );
   }
 
   return (
+    <>
     <main className="app-shell">
       <header className="top-bar">
         <div className="top-brand">
@@ -1335,6 +1357,26 @@ function App() {
         />
       ) : null}
     </main>
+    {brandIntro}
+    </>
+  );
+}
+
+function BrandIntro({ leaving }: { leaving: boolean }) {
+  return (
+    <div className={`brand-intro ${leaving ? "leaving" : ""}`} aria-hidden="true">
+      <img src={BRAND_SPLASH_SRC} alt="" />
+    </div>
+  );
+}
+
+function DiscoveryOverlay() {
+  return (
+    <div className="discovery-overlay" aria-live="polite" aria-label="Đang tìm máy tính">
+      <div className="discovery-overlay__image" />
+      <div className="discovery-overlay__shade" />
+      <div className="discovery-overlay__label">Đang tìm máy tính</div>
+    </div>
   );
 }
 

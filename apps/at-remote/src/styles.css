@@ -58,6 +58,74 @@ button:disabled {
   opacity: 0.56;
 }
 
+.brand-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: #19094a;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 260ms ease;
+  pointer-events: all;
+}
+
+.brand-intro.leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.brand-intro img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.discovery-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #ffffff;
+  pointer-events: all;
+}
+
+.discovery-overlay__image,
+.discovery-overlay__shade {
+  position: absolute;
+  inset: 0;
+}
+
+.discovery-overlay__image {
+  background: url("/splash-mobile.webp") center / cover no-repeat;
+  filter: blur(8px);
+  transform: scale(1.04);
+}
+
+.discovery-overlay__shade {
+  background: rgba(21, 8, 54, 0.5);
+}
+
+.discovery-overlay__label {
+  position: relative;
+  z-index: 1;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0 22px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
 .connect-page {
   min-height: 100dvh;
   height: 100dvh;
