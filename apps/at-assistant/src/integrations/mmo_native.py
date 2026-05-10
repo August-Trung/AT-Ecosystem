@@ -262,8 +262,8 @@ def _handle_qr(args: dict[str, Any]) -> ActionResult:
         text = _strip_noise(_raw(args), ("tao", "qr", "ma qr"))
     if not text:
         return ActionResult.need_clarify(
-            "Ban muon tao QR cho noi dung gi?",
-            "Gui vi du: tao qr https://example.com trong mmo",
+            "Bạn muốn tạo QR cho nội dung gì?",
+            "Gửi ví dụ: tạo qr https://example.com trong mmo",
             {"action_id": "mmo.openQrGenerator"},
         )
 
@@ -277,12 +277,12 @@ def _handle_qr(args: dict[str, Any]) -> ActionResult:
         path = _telegram_runtime_dir() / f"mmo_qr_{int(time.time() * 1000)}.png"
         path.write_bytes(response.content)
         return ActionResult.ok(
-            f"Da tao QR cho:\n{text}",
+            f"Đã tạo QR cho:\n{text}",
             telegram_photo_path=str(path),
             qr_text=text,
         )
     except Exception as exc:
-        return ActionResult.err(f"Khong tao duoc QR: {exc}", code=ErrorCode.UNKNOWN, qr_text=text)
+        return ActionResult.err(f"Không tạo được QR: {exc}", code=ErrorCode.UNKNOWN, qr_text=text)
 
 
 def _handle_json(args: dict[str, Any]) -> ActionResult:
@@ -295,21 +295,21 @@ def _handle_json(args: dict[str, Any]) -> ActionResult:
         text = _text_arg(args, ("format", "json", "xml", "minify", "beautify", "parse", "string"))
     if not text:
         return ActionResult.need_clarify(
-            "Ban muon format JSON/XML nao?",
-            'Gui vi du: format json {"a":1} trong mmo',
+            "Bạn muốn format JSON/XML nào?",
+            'Gửi ví dụ: format json {"a":1} trong mmo',
             {"action_id": "mmo.openJsonFormatter"},
         )
 
     try:
         formatted = _format_xml(text) if operation == "xml" else _format_json_value(text, operation)
     except Exception as exc:
-        return ActionResult.err(f"JSON/XML khong hop le: {exc}", code=ErrorCode.UNKNOWN, input=text[:1000])
+        return ActionResult.err(f"JSON/XML không hợp lệ: {exc}", code=ErrorCode.UNKNOWN, input=text[:1000])
 
     title = {
-        "beautify": "JSON da format",
-        "minify": "JSON da minify",
-        "parse_string": "JSON string da parse",
-        "xml": "XML da format",
+        "beautify": "JSON đã format",
+        "minify": "JSON đã minify",
+        "parse_string": "JSON string đã parse",
+        "xml": "XML đã format",
     }[operation]
     return ActionResult.ok(f"{title}:\n```json\n{_clip(formatted)}\n```", formatted=formatted, operation=operation)
 
@@ -403,16 +403,16 @@ def _format_mailbox_result(state: dict[str, Any], messages: list[dict[str, Any]]
     _save_temp_mail_state(state)
 
     lines = [
-        ("Da tao email tam:" if created_new else "Email tam hien tai:"),
+        ("Đã tạo email tạm:" if created_new else "Email tạm hiện tại:"),
         address,
         "",
-        "Mailbox nay do ATAssistant quan ly cho Telegram. Web TempMail dung session rieng nen co the khac.",
+        "Email tạm này do ATAssistant quản lý, giống luồng Telegram hiện tại.",
         "",
     ]
     if not messages:
-        lines.append("Inbox hien chua co mail.")
+        lines.append("Inbox hiện chưa có mail.")
     else:
-        lines.append(f"Inbox co {len(messages)} mail:")
+        lines.append(f"Inbox có {len(messages)} mail:")
         for index, msg in enumerate(messages[:10], start=1):
             lines.append(f"{index}. {msg['subject']}")
             lines.append(f"   From: {msg['from']}")
@@ -420,11 +420,11 @@ def _format_mailbox_result(state: dict[str, Any], messages: list[dict[str, Any]]
                 lines.append(f"   {msg['intro'][:160]}")
 
     command_buttons = [
-        {"text": "Refresh inbox", "command": "mo temp mail"},
-        {"text": "New address", "command": "tao temp mail moi"},
+        {"text": "Làm mới", "command": "mở temp mail"},
+        {"text": "Tạo email mới", "command": "tạo temp mail mới"},
     ]
     for index, _msg in enumerate(messages[:6], start=1):
-        command_buttons.append({"text": f"Read {index}", "command": f"doc temp mail so {index}"})
+        command_buttons.append({"text": f"Đọc {index}", "command": f"đọc temp mail số {index}"})
 
     return ActionResult.ok(
         "\n".join(lines).strip(),
@@ -447,8 +447,8 @@ def _handle_temp_mail(args: dict[str, Any]) -> ActionResult:
                 _save_temp_mail_state(state)
             if index < 1 or index > len(messages):
                 return ActionResult.need_clarify(
-                    "Chua chon duoc email can doc.",
-                    "Gui: doc temp mail so 1",
+                    "Chưa chọn được email cần đọc.",
+                    "Gửi: đọc temp mail số 1",
                     {"action_id": "mmo.openTempMail"},
                 )
             detail = _fetch_message_detail(str(state.get("token") or ""), str(messages[index - 1].get("id") or ""))
@@ -470,7 +470,7 @@ def _handle_temp_mail(args: dict[str, Any]) -> ActionResult:
         messages = _fetch_messages(str(state.get("token") or ""))
         return _format_mailbox_result(state, messages, created_new=force_new)
     except Exception as exc:
-        return ActionResult.err(f"Khong xu ly duoc Temp Mail: {exc}", code=ErrorCode.UNKNOWN)
+        return ActionResult.err(f"Không xử lý được Temp Mail: {exc}", code=ErrorCode.UNKNOWN)
 
 
 def _handle_hash(args: dict[str, Any]) -> ActionResult:
@@ -483,7 +483,7 @@ def _handle_hash(args: dict[str, Any]) -> ActionResult:
     algo = algo or "sha256"
     text = _text_arg(args, ("hash", "compute", "md5", "sha1", "sha256", "sha384", "sha512"))
     if not text:
-        return ActionResult.need_clarify("Can text de bam hash.", "Vi du: hash sha256 hello trong mmo", {"action_id": "mmo.openHashTool"})
+        return ActionResult.need_clarify("Cần text để băm hash.", "Ví dụ: hash sha256 hello trong mmo", {"action_id": "mmo.openHashTool"})
     digest = hashlib.new(algo.replace("sha", "sha"), text.encode("utf-8")).digest()
     hex_value = digest.hex()
     b64_value = base64.b64encode(digest).decode("ascii")

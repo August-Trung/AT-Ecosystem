@@ -23,6 +23,14 @@ User command
   -> at-hotkey-sdk registry invokes the registered handler
 ```
 
+## AT Remote LAN Slice
+
+- `apps/at-assistant/src/integrations/mobile_remote.py` exposes the first LAN bridge for AT Remote.
+- Phones must pair with a short code and wait for desktop approval before commands are accepted.
+- Mobile commands call `Engine.handle_turn(..., source="mobile")`.
+- Mobile delivery uses native MMO handlers when available, so portable tools do not force-open the web MMO UI.
+- `apps/at-remote` is a React/Vite PWA that can be served by the bridge after `npm run build`.
+
 ## Next Steps
 
 1. Add a real browser bridge for active tabs via DevTools/WebSocket or a local assistant bridge so ATAssistant can receive action results from the page.

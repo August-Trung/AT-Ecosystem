@@ -7,6 +7,7 @@ The long-term goal is simple: ATAssistant acts as the core assistant and automat
 ## What This Includes
 
 - `ATAssistant`: a desktop assistant core for automation, file workflows, search, device control, and future cross-device coordination.
+- `AT Remote`: a mobile-first LAN companion app for sending commands from Android/PWA to ATAssistant.
 - Public web apps: hosted tools and experiences under `augusttrung.com` subdomains.
 - Shared packages: reserved space for common protocol, hotkey/action registration, and assistant integration code.
 - Deployment notes: infrastructure and release documentation for the ecosystem.
@@ -37,6 +38,7 @@ The long-term goal is simple: ATAssistant acts as the core assistant and automat
 AT-Ecosystem/
   apps/
     at-assistant/
+    at-remote/
     arcade-web/
     atomorrow-web/
     augustdown-web/

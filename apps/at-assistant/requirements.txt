@@ -12,6 +12,7 @@ psutil==7.2.1
 PyAudio
 pydantic==2.12.5
 pyinstaller
+qrcode[pil]
 pytest
 pywin32==311
 requests==2.32.5

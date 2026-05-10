@@ -130,6 +130,29 @@ def test_telegram_delivery_uses_native_handler_without_opening_browser(monkeypat
     assert result.data["url"].startswith("http://localhost:3000/#/json-format?")
 
 
+def test_mobile_delivery_uses_native_handler_without_opening_browser(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setenv("AT_MMO_WEB_URL", "http://localhost:3000")
+    monkeypatch.setattr(web_actions.executor, "open_url", lambda url, browser="default": calls.append(url) or ActionResult.ok("opened"))
+    monkeypatch.setattr(
+        web_actions,
+        "handle_native_mmo_action",
+        lambda action_id, args: ActionResult.ok("native mobile", native_action=action_id, native_args=args),
+    )
+
+    result = web_actions.invoke_web_action(
+        "mmo-web",
+        "mmo.openHashTool",
+        {"text": "hello"},
+        delivery="mobile",
+    )
+
+    assert result.status == ActionStatus.SUCCESS
+    assert result.message == "native mobile"
+    assert calls == []
+    assert result.data["url"].startswith("http://localhost:3000/#/hash?")
+
+
 def test_telegram_temp_mail_native_result_does_not_offer_web_button(monkeypatch):
     calls: list[str] = []
     monkeypatch.setenv("AT_MMO_WEB_URL", "http://localhost:3000")
