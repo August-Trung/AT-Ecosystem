@@ -78,6 +78,8 @@ type ChatMessage = {
   cards?: MobileCard[];
   buttons?: MobileButton[];
   status?: string;
+  pending?: boolean;
+  time?: string;
 };
 
 type SavedConnection = {
@@ -225,6 +227,8 @@ const clearConnection = () => {
 
 const newId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+const timeLabel = () => new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+
 const fileToBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -267,6 +271,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const stepRef = useRef<ConnectionStep>("checking");
+  const stickToBottomRef = useRef(true);
 
   const setConnectionStep = useCallback((next: ConnectionStep) => {
     stepRef.current = next;
@@ -295,6 +300,7 @@ function App() {
               id: newId(),
               role: "assistant",
               text: "Đã kết nối với ATAssistant.",
+              time: timeLabel(),
               cards: [
                 {
                   type: "message",
@@ -338,8 +344,15 @@ function App() {
   }, [checkHealth]);
 
   useEffect(() => {
+    if (!stickToBottomRef.current) return;
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  const handleConversationScroll = () => {
+    const element = listRef.current;
+    if (!element) return;
+    stickToBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 120;
+  };
 
   useEffect(() => {
     if (step !== "pending" || !pairRequestId) return;
@@ -423,10 +436,26 @@ function App() {
         role: "assistant",
         text,
         status: "error",
+        time: timeLabel(),
         cards: [{ type: "error", title: "Mất kết nối", message: text }],
         buttons: [{ label: "Thử lại", command: "__retry__" }]
       }
     ]);
+  };
+
+  const replaceMessage = (id: string, next: Omit<ChatMessage, "id" | "role">) => {
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              ...next,
+              pending: next.pending ?? false,
+              time: next.time || message.time || timeLabel()
+            }
+          : message
+      )
+    );
   };
 
   const remoteFileUrl = useCallback(
@@ -489,6 +518,8 @@ function App() {
       setConnectionStep("connect");
       return;
     }
+    stickToBottomRef.current = true;
+    const pendingId = newId();
     setBusy(true);
     setDraft("");
     setLastCommand(command.trim());
@@ -497,11 +528,20 @@ function App() {
       {
         id: newId(),
         role: "user",
-        text: command.trim() ? `${command.trim()}\nTệp: ${file.name}` : `Gửi tệp: ${file.name}`
+        text: command.trim() ? `${command.trim()}\nTệp: ${file.name}` : `Gửi tệp: ${file.name}`,
+        time: timeLabel()
+      },
+      {
+        id: pendingId,
+        role: "assistant",
+        text: "Đang gửi tệp...",
+        pending: true,
+        time: timeLabel()
       }
     ]);
     try {
       const dataBase64 = await fileToBase64(file);
+      replaceMessage(pendingId, { text: "Đang xử lý tệp...", pending: true });
       const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/upload`, {
         method: "POST",
         headers: {
@@ -517,20 +557,21 @@ function App() {
       });
       const data = response.data;
       if (!response.ok || data.status === "unauthorized") throw new Error(friendlyFetchError());
-      setMessages((current) => [
-        ...current,
-        {
-          id: newId(),
-          role: "assistant",
-          text: data.message,
-          cards: data.cards,
-          buttons: data.buttons,
-          status: data.status
-        }
-      ]);
+      replaceMessage(pendingId, {
+        text: data.message,
+        cards: data.cards,
+        buttons: data.buttons,
+        status: data.status
+      });
       setConnectionText("Đã kết nối");
     } catch (error) {
-      appendAssistantError(friendlyConnectionError(error));
+      const text = friendlyConnectionError(error);
+      replaceMessage(pendingId, {
+        text,
+        status: "error",
+        cards: [{ type: "error", title: "Mất kết nối", message: text }],
+        buttons: [{ label: "Thử lại", command: "__retry__" }]
+      });
       setConnectionText("Mất kết nối");
     } finally {
       setBusy(false);
@@ -549,9 +590,15 @@ function App() {
       setConnectionStep("connect");
       return;
     }
+    stickToBottomRef.current = true;
+    const pendingId = newId();
     setLastCommand(clean);
     setDraft("");
-    setMessages((current) => [...current, { id: newId(), role: "user", text: clean }]);
+    setMessages((current) => [
+      ...current,
+      { id: newId(), role: "user", text: clean, time: timeLabel() },
+      { id: pendingId, role: "assistant", text: "Đang xử lý...", pending: true, time: timeLabel() }
+    ]);
     setBusy(true);
     try {
       const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/command`, {
@@ -565,20 +612,21 @@ function App() {
       if (!response.ok || data.status === "unauthorized") {
         throw new Error(friendlyFetchError());
       }
-      setMessages((current) => [
-        ...current,
-        {
-          id: newId(),
-          role: "assistant",
-          text: data.message,
-          cards: data.cards,
-          buttons: data.buttons,
-          status: data.status
-        }
-      ]);
+      replaceMessage(pendingId, {
+        text: data.message,
+        cards: data.cards,
+        buttons: data.buttons,
+        status: data.status
+      });
       setConnectionText("Đã kết nối");
     } catch (error) {
-      appendAssistantError(friendlyConnectionError(error));
+      const text = friendlyConnectionError(error);
+      replaceMessage(pendingId, {
+        text,
+        status: "error",
+        cards: [{ type: "error", title: "Mất kết nối", message: text }],
+        buttons: [{ label: "Thử lại", command: "__retry__" }]
+      });
       setConnectionText("Mất kết nối");
     } finally {
       setBusy(false);
@@ -710,7 +758,7 @@ function App() {
         </button>
       </header>
 
-      <section className="conversation" ref={listRef}>
+      <section className="conversation" ref={listRef} onScroll={handleConversationScroll}>
         {messages.length === 0 ? (
           <div className="empty-state">
             <MonitorSmartphone size={42} />
@@ -720,7 +768,13 @@ function App() {
         ) : (
           messages.map((message) => (
             <article key={message.id} className={`message ${message.role}`}>
-              <p className="message-text">{message.text}</p>
+              <div className={`message-bubble ${message.pending ? "pending" : ""}`}>
+                <p className="message-text">{message.text}</p>
+                <div className="message-meta">
+                  {message.pending ? <RefreshCw className="spin" size={12} /> : null}
+                  <span>{message.pending ? "Đang xử lý" : message.time}</span>
+                </div>
+              </div>
               {message.cards?.map((card, index) => (
                 <ResultCard
                   key={`${message.id}-${index}`}

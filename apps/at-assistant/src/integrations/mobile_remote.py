@@ -29,6 +29,7 @@ DEFAULT_REMOTE_HOST = "0.0.0.0"
 DEFAULT_REMOTE_PORT = 8765
 PAIR_REQUEST_TTL_SECONDS = 10 * 60
 REMOTE_FILE_TTL_SECONDS = 60 * 60
+LAST_SEEN_TOUCH_INTERVAL_SECONDS = 30
 MAX_COMMAND_LENGTH = 8000
 MAX_IMAGE_EMBED_BYTES = 3 * 1024 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
@@ -64,6 +65,16 @@ DEFAULT_MOBILE_REMOTE_SETTINGS: dict[str, Any] = {
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _should_touch_last_seen(value: str) -> bool:
+    try:
+        previous = datetime.fromisoformat(str(value or ""))
+    except Exception:
+        return True
+    if previous.tzinfo is None:
+        previous = previous.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - previous).total_seconds() >= LAST_SEEN_TOUCH_INTERVAL_SECONDS
 
 
 def _token_hash(token: str) -> str:
@@ -725,12 +736,15 @@ class MobileRemoteBridge:
             self._settings = self.settings_store.load()
             devices = list(self._settings.get("paired_devices") or [])
             matched: dict[str, Any] | None = None
+            changed = False
             for item in devices:
                 if hmac.compare_digest(str(item.get("key_hash") or ""), key_hash):
-                    item["last_seen"] = _now_iso()
+                    if _should_touch_last_seen(str(item.get("last_seen") or "")):
+                        item["last_seen"] = _now_iso()
+                        changed = True
                     matched = item
                     break
-            if matched:
+            if matched and changed:
                 self._settings["paired_devices"] = devices
                 self.settings_store.save(self._settings)
             return matched
@@ -1154,20 +1168,36 @@ def _buttons_from_result(result: ActionResult) -> list[dict[str, Any]]:
             {"label": "Làm mới", "command": "mở temp mail", "tone": "neutral"},
             {"label": "Tạo email mới", "command": "tạo temp mail mới", "tone": "neutral"},
         ]
+
+    def append_button(button: dict[str, Any]) -> None:
+        key = (button.get("label"), button.get("command"), button.get("url"))
+        if key not in {(item.get("label"), item.get("command"), item.get("url")) for item in buttons}:
+            buttons.append(button)
+
     for item in list(data.get("telegram_command_buttons") or [])[:8]:
         if not isinstance(item, dict):
             continue
         label = _mobile_button_label(str(item.get("text") or "").strip())
         command = _mobile_command_text(str(item.get("command") or "").strip())
         if label and command:
-            buttons.append({"label": label, "command": command, "tone": "neutral"})
-    for item in list(data.get("mobile_buttons") or [])[:4]:
+            append_button({"label": label, "command": command, "tone": "neutral"})
+    for item in list(data.get("telegram_url_buttons") or [])[:6]:
         if not isinstance(item, dict):
             continue
-        label = str(item.get("text") or item.get("label") or "").strip()
+        label = _mobile_button_label(str(item.get("text") or "").strip())
         url = str(item.get("url") or "").strip()
         if label and url.startswith(("http://", "https://")):
-            buttons.append({"label": label, "url": url, "tone": "neutral"})
+            append_button({"label": label, "url": url, "tone": "neutral"})
+    for item in list(data.get("mobile_buttons") or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        label = _mobile_button_label(str(item.get("text") or item.get("label") or "").strip())
+        command = _mobile_command_text(str(item.get("command") or "").strip())
+        url = str(item.get("url") or "").strip()
+        if label and command:
+            append_button({"label": label, "command": command, "tone": "neutral"})
+        if label and url.startswith(("http://", "https://")):
+            append_button({"label": label, "url": url, "tone": "neutral"})
     return buttons
 
 

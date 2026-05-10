@@ -2164,14 +2164,14 @@ class ATAssistantApp(ctk.CTk):
                     f"Đã kết nối điện thoại: {payload.get('name') or 'Thiết bị'}."
                 )
             elif event == "file_received":
-                device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
                 file_info = payload.get("file") if isinstance(payload.get("file"), dict) else {}
                 name = str(file_info.get("name") or Path(str(payload.get("path") or "")).name or "tệp")
-                device_name = str(device.get("name") or "Điện thoại")
+                command = str(payload.get("command") or "").strip()
                 self._ensure_active_chat_session()
-                self.chat.add_system_message(f"{device_name} đã gửi tệp: {name}")
-                self._persist_current_chat_session()
-                self._reload_chat_session_list()
+                if not command:
+                    self.chat.add_user_message(f"Gửi tệp: {name}")
+                    self._persist_current_chat_session()
+                    self._reload_chat_session_list()
             elif event == "command_received":
                 command = str(payload.get("displayCommand") or payload.get("command") or "").strip()
                 if command:

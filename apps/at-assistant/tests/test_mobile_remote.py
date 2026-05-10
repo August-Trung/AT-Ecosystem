@@ -226,7 +226,8 @@ def test_mobile_remote_upload_saves_file_and_can_run_command(tmp_path, monkeypat
 
 
 def test_mobile_remote_upload_without_command_returns_one_file_card(tmp_path, monkeypatch):
-    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    events: list[tuple[str, dict]] = []
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch), on_event=lambda event, payload: events.append((event, payload)))
     bridge.start(host="127.0.0.1", port=0)
     base = f"http://127.0.0.1:{bridge.port}"
     try:
@@ -250,6 +251,8 @@ def test_mobile_remote_upload_without_command_returns_one_file_card(tmp_path, mo
         assert len(file_cards) == 1
         assert file_cards[0]["title"] == "Tệp đã gửi"
         assert len(payload["files"]) == 1
+        assert [event for event, _payload in events].count("file_received") == 1
+        assert [event for event, _payload in events].count("command_received") == 0
     finally:
         bridge.stop()
 
@@ -314,3 +317,41 @@ def test_mobile_remote_confirmation_payload_has_phone_buttons():
     assert payload["cards"][0]["type"] == "confirm"
     assert payload["buttons"][0]["command"] == "yes"
     assert payload["buttons"][1]["command"] == "no"
+
+
+def test_mobile_remote_payload_maps_telegram_and_mobile_buttons():
+    payload = mobile_payload_from_result(
+        ActionResult.ok(
+            "Có thao tác",
+            telegram_command_buttons=[{"text": "Refresh inbox", "command": "mo temp mail"}],
+            telegram_url_buttons=[{"text": "Mở web", "url": "https://example.com"}],
+            mobile_buttons=[
+                {"label": "Tạo mới", "command": "tao temp mail moi"},
+                {"label": "Mở ngoài", "url": "https://example.org"},
+            ],
+        )
+    )
+
+    assert {"label": "Làm mới", "command": "mở temp mail", "tone": "neutral"} in payload["buttons"]
+    assert {"label": "Mở web", "url": "https://example.com", "tone": "neutral"} in payload["buttons"]
+    assert {"label": "Tạo mới", "command": "tạo temp mail mới", "tone": "neutral"} in payload["buttons"]
+    assert {"label": "Mở ngoài", "url": "https://example.org", "tone": "neutral"} in payload["buttons"]
+
+
+def test_mobile_remote_last_seen_is_throttled(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        bridge.handle_command(auth_key, "trạng thái máy")
+        first_seen = bridge.snapshot()["devices"][0]["lastSeen"]
+        bridge.handle_command(auth_key, "trạng thái máy")
+        second_seen = bridge.snapshot()["devices"][0]["lastSeen"]
+
+        assert first_seen
+        assert second_seen == first_seen
+    finally:
+        bridge.stop()

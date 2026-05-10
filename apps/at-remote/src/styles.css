@@ -461,26 +461,50 @@ button:disabled {
   justify-items: end;
 }
 
-.message-text {
+.message-bubble {
   width: fit-content;
   max-width: 92%;
-  margin: 0;
   padding: 10px 12px;
   border-radius: 8px;
+  display: grid;
+  gap: 5px;
+}
+
+.message.user .message-bubble {
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.message.assistant .message-bubble {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.message-bubble.pending {
+  color: var(--muted);
+}
+
+.message-text {
+  margin: 0;
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.message.user .message-text {
-  background: var(--teal);
-  color: #ffffff;
+.message-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 4px;
+  min-height: 14px;
+  color: rgba(96, 112, 135, 0.82);
+  font-size: 0.68rem;
+  font-weight: 750;
 }
 
-.message.assistant .message-text {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink);
+.message.user .message-meta {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .result-card {

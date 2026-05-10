@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import webbrowser
 
 import customtkinter as ctk
 
+from src.core.app_paths import ensure_app_data_dir
 from src.gui.theme import FONT_FAMILY, FONT_SIZE_NORMAL, FONT_SIZE_SMALL, FONT_SIZE_TITLE
 from src.integrations.mobile_remote import DEFAULT_REMOTE_PORT, MobileRemoteBridge, MobileRemoteSettingsStore
 
@@ -196,10 +198,11 @@ class MobileRemoteDialog(ctk.CTkToplevel):
 
         actions = ctk.CTkFrame(shell, fg_color="transparent")
         actions.grid(row=4, column=0, sticky="ew", pady=(0, 12))
-        actions.grid_columnconfigure((0, 1, 2), weight=1)
+        actions.grid_columnconfigure((0, 1, 2, 3), weight=1)
         self._button(actions, "Đổi mã", self._rotate_code, 0, tone="neutral")
         self._button(actions, "Mở AT Remote", self._open_remote_url, 1, tone="primary")
-        self._button(actions, "Đóng", self.destroy, 2, tone="neutral")
+        self._button(actions, "Mở thư mục tệp", self._open_uploads_folder, 2, tone="neutral")
+        self._button(actions, "Đóng", self.destroy, 3, tone="neutral")
 
         lists = ctk.CTkFrame(shell, fg_color="transparent")
         lists.grid(row=5, column=0, sticky="nsew")
@@ -288,6 +291,13 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         if urls:
             webbrowser.open(str(urls[0]))
 
+    def _open_uploads_folder(self) -> None:
+        path = ensure_app_data_dir("mobile_uploads")
+        try:
+            os.startfile(path)  # type: ignore[attr-defined]
+        except Exception:
+            webbrowser.open(path.as_uri())
+
     def _approve(self, request_id: str) -> None:
         result = self._bridge.approve_pair_request(request_id)
         if result.get("ok"):
@@ -324,13 +334,36 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             self._render_qr(qr_url)
 
         pending = list(snapshot.get("pending") or [])
-        pending_signature = json.dumps(pending, ensure_ascii=False, sort_keys=True)
+        pending_signature = json.dumps(
+            [
+                {
+                    "id": item.get("id"),
+                    "deviceName": item.get("deviceName"),
+                    "clientHost": item.get("clientHost"),
+                    "status": item.get("status"),
+                }
+                for item in pending
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         if pending_signature != self._last_pending_signature:
             self._last_pending_signature = pending_signature
             self._render_pending(pending)
 
         devices = list(snapshot.get("devices") or [])
-        devices_signature = json.dumps(devices, ensure_ascii=False, sort_keys=True)
+        devices_signature = json.dumps(
+            [
+                {
+                    "id": item.get("id"),
+                    "name": item.get("name"),
+                    "approvedAt": item.get("approvedAt"),
+                }
+                for item in devices
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
         if devices_signature != self._last_devices_signature:
             self._last_devices_signature = devices_signature
             self._render_devices(devices)
