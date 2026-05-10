@@ -185,6 +185,36 @@ def test_mobile_remote_serves_result_file_without_exposing_path(tmp_path, monkey
         bridge.stop()
 
 
+def test_mobile_remote_image_result_is_not_duplicated_as_file(tmp_path):
+    image_path = tmp_path / "screenshot.png"
+    image_path.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+    )
+    resolved: list[tuple[str, str]] = []
+
+    def resolver(path: str | Path, kind: str) -> dict:
+        resolved.append((str(path), kind))
+        return {
+            "id": f"{kind}-1",
+            "name": Path(path).name,
+            "mime": "image/png",
+            "size": Path(path).stat().st_size,
+            "downloadUrl": f"/api/files/{kind}-1?token=t",
+        }
+
+    payload = mobile_payload_from_result(
+        ActionResult.ok("Đã chụp màn hình.", telegram_photo_path=str(image_path), path=str(image_path)),
+        file_resolver=resolver,
+    )
+
+    assert [card["type"] for card in payload["cards"]] == ["image"]
+    assert payload["cards"][0]["image"]["src"].startswith("data:image/png;base64,")
+    assert payload["files"] == []
+    assert resolved == [(str(image_path), "image")]
+
+
 def test_mobile_remote_upload_saves_file_and_can_run_command(tmp_path, monkeypatch):
     events: list[tuple[str, dict]] = []
     engine = _FakeEngine()

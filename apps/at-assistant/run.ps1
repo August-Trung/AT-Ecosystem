@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Command = "help"
+    [string]$Command = "app"
 )
 
 $ErrorActionPreference = "Stop"
@@ -32,8 +32,9 @@ function Show-Help {
     Write-Host "AT Assistant command shortcuts"
     Write-Host ""
     Write-Host "Usage:"
+    Write-Host "  .\run.ps1           Start the desktop app"
     Write-Host "  .\run.ps1 app       Start the desktop app"
-    Write-Host "  .\run.ps1 remote    Start AT Remote LAN bridge without the desktop window"
+    Write-Host "  .\run.ps1 remote    Developer only: start AT Remote LAN bridge without the desktop window"
     Write-Host "  .\run.ps1 check     Run NLU stress + regression + intent + slot checks"
     Write-Host "  .\run.ps1 train     Safe auto-label, train, evaluate, and promote NLU model"
     Write-Host "  .\run.ps1 test      Run all pytest tests"

@@ -4,23 +4,23 @@ AT Remote là app Android-first để điều khiển ATAssistant qua WiFi nội
 
 ## Chạy Với ATAssistant
 
-Terminal desktop:
+Chạy một bản desktop duy nhất:
 
 ```powershell
 cd "D:\Study\Projects\AT Ecosystem\apps\at-assistant"
-.\run.ps1 remote
+.\run.ps1
 ```
 
-Hoặc mở ATAssistant và bật `Kết nối điện thoại`.
+Trong ATAssistant, bật `Kết nối điện thoại`. Không cần chạy thêm Vite/dev server cho bản Android đã cài.
 
 Trên điện thoại:
 
-1. Cài APK hoặc mở URL LAN đang hiện trong ATAssistant.
+1. Cài APK hoặc mở URL LAN đang hiện trong ATAssistant nếu muốn dùng bản web.
 2. Bấm `Tìm máy tính trong WiFi`; app sẽ tự dò máy đang bật ATAssistant.
 3. Quét QR hoặc nhập mã kết nối nếu cần.
 4. Chọn `Cho phép` trong cửa sổ `Kết nối điện thoại` trên desktop.
 
-QR dùng deep link `atremote://pair?...` để mở thẳng app Android nếu đã cài. URL HTTP bên dưới QR vẫn dùng được cho PWA/browser.
+QR dùng deep link `atremote://pair?...` để mở thẳng app Android nếu đã cài. URL HTTP bên dưới QR vẫn dùng được cho PWA/browser khi `apps/at-remote` đã được build.
 
 ## Web/PWA Development
 

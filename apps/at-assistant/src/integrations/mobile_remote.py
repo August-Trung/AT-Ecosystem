@@ -1483,15 +1483,16 @@ def _files_from_result(
     if not file_resolver or not isinstance(result.data, dict):
         return []
     files: list[dict[str, Any]] = []
+    image_path = str(result.data.get("telegram_photo_path") or result.data.get("image_path") or "").strip()
     for key, kind in (
-        ("telegram_photo_path", "image"),
-        ("image_path", "image"),
         ("telegram_document_path", "file"),
         ("mobile_uploaded_file", "upload"),
         ("path", "file"),
     ):
         value = str(result.data.get(key) or "").strip()
         if not value:
+            continue
+        if image_path and Path(value) == Path(image_path):
             continue
         public = file_resolver(value, kind)
         if public and not any(item.get("id") == public.get("id") for item in files):
@@ -1512,6 +1513,14 @@ def _image_card_from_data(
     if not file_path.exists() or not file_path.is_file():
         return None
     public_file = file_resolver(file_path, "image") if file_resolver else None
+    embedded_src = ""
+    try:
+        if file_path.stat().st_size <= MAX_IMAGE_EMBED_BYTES:
+            raw = file_path.read_bytes()
+            mime = mimetypes.guess_type(str(file_path))[0] or "image/png"
+            embedded_src = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    except Exception:
+        embedded_src = ""
     if public_file:
         return {
             "type": "image",
@@ -1519,7 +1528,7 @@ def _image_card_from_data(
             "message": _mobile_text(message),
             "file": public_file,
             "image": {
-                "src": public_file.get("downloadUrl") or "",
+                "src": embedded_src or public_file.get("downloadUrl") or "",
                 "downloadUrl": public_file.get("downloadUrl") or "",
                 "name": public_file.get("name") or file_path.name,
                 "mime": public_file.get("mime") or "image/png",
@@ -1559,6 +1568,9 @@ def _document_card_from_data(
     if not path:
         path = str(data.get("path") or "").strip()
     if not path:
+        return None
+    image_path = str(data.get("telegram_photo_path") or data.get("image_path") or "").strip()
+    if image_path and Path(path) == Path(image_path):
         return None
     file_path = Path(path)
     if not file_path.exists() or not file_path.is_file():

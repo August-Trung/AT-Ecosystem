@@ -1,5 +1,7 @@
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import {
   BatteryCharging,
   Check,
@@ -360,6 +362,23 @@ const fileToBase64 = (file: File) =>
     reader.onerror = () => reject(reader.error || new Error("Không đọc được tệp."));
     reader.readAsDataURL(file);
   });
+
+const blobToBase64 = (blob: Blob) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",", 2)[1] : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("Không đọc được tệp."));
+    reader.readAsDataURL(blob);
+  });
+
+const safeShareFileName = (name: string) =>
+  (String(name || "at-remote-file").replace(/[\\/:*?"<>|\x00-\x1f]+/g, "_").trim() || "at-remote-file").slice(0, 120);
+
+const isImageFile = (file: RemoteFile) =>
+  String(file.mime || "").toLowerCase().startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "");
 
 const downloadBlob = (blob: Blob, name: string) => {
   const url = URL.createObjectURL(blob);
@@ -755,6 +774,23 @@ function App() {
     async (file: RemoteFile) => {
       try {
         const blob = await fetchRemoteFile(file);
+        if (Capacitor.isNativePlatform()) {
+          const safeName = safeShareFileName(file.name);
+          const cachePath = `${Date.now()}-${safeName}`;
+          await Filesystem.writeFile({
+            path: cachePath,
+            data: await blobToBase64(blob),
+            directory: Directory.Cache
+          });
+          const uri = await Filesystem.getUri({ path: cachePath, directory: Directory.Cache });
+          await Share.share({
+            title: file.name,
+            text: file.name,
+            files: [uri.uri],
+            dialogTitle: "Chia sẻ"
+          });
+          return;
+        }
         const sharedFile = new File([blob], file.name, { type: file.mime || blob.type || "application/octet-stream" });
         const shareData = { title: file.name, files: [sharedFile] };
         if (navigator.canShare?.(shareData)) {
@@ -771,11 +807,29 @@ function App() {
   );
 
   const openRemoteFile = useCallback(
-    (file: RemoteFile) => {
+    async (file: RemoteFile) => {
+      if (isImageFile(file)) {
+        try {
+          const blob = await fetchRemoteFile(file);
+          setImageViewer({
+            src: URL.createObjectURL(blob),
+            title: file.name || "Ảnh kết quả",
+            file
+          });
+          return;
+        } catch {
+          setImageViewer({
+            src: remoteFileUrl(file),
+            title: file.name || "Ảnh kết quả",
+            file
+          });
+          return;
+        }
+      }
       const url = remoteFileUrl(file);
       if (url) window.open(url, "_blank", "noopener,noreferrer");
     },
-    [remoteFileUrl]
+    [fetchRemoteFile, remoteFileUrl]
   );
 
   const loadUploads = useCallback(async () => {
@@ -1429,18 +1483,19 @@ function ResultCard({
       size: card.image.size || 0,
       downloadUrl: card.image.downloadUrl
     } : undefined);
+    const openViewer = () => onOpenImage({ src: imageSrc, title: card.title || "Ảnh kết quả", caption: card.caption, file });
     return (
       <div className="result-card image-card">
         <h3>{card.title || "Ảnh kết quả"}</h3>
         <button
           type="button"
           className="image-preview-button"
-          onClick={() => onOpenImage({ src: imageSrc, title: card.title || "Ảnh kết quả", caption: card.caption, file })}
+          onClick={openViewer}
         >
           <img src={imageSrc} alt={card.image.alt || "Kết quả"} />
         </button>
         {card.caption ? <p>{card.caption}</p> : null}
-        {file ? <FileActions file={file} onOpen={onOpenFile} onDownload={onDownloadFile} onShare={onShareFile} /> : null}
+        {file ? <FileActions file={file} onOpen={openViewer} onDownload={onDownloadFile} onShare={onShareFile} /> : null}
       </div>
     );
   }
