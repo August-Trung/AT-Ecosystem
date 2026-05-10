@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import base64
+import socket
+from types import SimpleNamespace
 
 import requests
 
 from src.core.result import ActionResult
+from src.integrations import mobile_remote as mobile_remote_module
 from src.integrations.mobile_remote import MobileRemoteBridge, MobileRemoteSettingsStore, mobile_payload_from_result
 
 
@@ -117,6 +120,30 @@ def test_mobile_remote_settings_never_bind_loopback_for_lan(tmp_path, monkeypatc
 
     assert saved["host"] == "0.0.0.0"
     assert store.load()["host"] == "0.0.0.0"
+
+
+def test_mobile_remote_snapshot_exposes_tailscale_urls(tmp_path, monkeypatch):
+    if mobile_remote_module.psutil is None:
+        return
+
+    monkeypatch.setattr(
+        mobile_remote_module.psutil,
+        "net_if_addrs",
+        lambda: {
+            "Tailscale": [SimpleNamespace(family=socket.AF_INET, address="100.101.102.103")],
+            "Wi-Fi": [SimpleNamespace(family=socket.AF_INET, address="192.168.1.23")],
+        },
+    )
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        snapshot = bridge.snapshot()
+        assert any(item["kind"] == "tailscale" and item["address"] == "100.101.102.103" for item in snapshot["networkAddresses"])
+        assert f"http://100.101.102.103:{bridge.port}" in snapshot["tailscaleUrls"]
+        assert f"http://100.101.102.103:{bridge.port}/?code={bridge.pair_code}" in snapshot["tailscalePairingUrls"]
+    finally:
+        bridge.stop()
 
 
 def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path, monkeypatch):

@@ -133,6 +133,9 @@ type HealthPayload = {
   urls?: string[];
   pairingUrls?: string[];
   deepLinkUrls?: string[];
+  tailscaleUrls?: string[];
+  tailscalePairingUrls?: string[];
+  networkAddresses?: Array<{ address?: string; kind?: string; label?: string; adapter?: string }>;
   staticAppReady?: boolean;
 };
 
@@ -141,6 +144,7 @@ type DiscoveredComputer = {
   name: string;
   pairCode: string;
   status: string;
+  kind?: string;
 };
 
 type PermissionGroup = {
@@ -231,6 +235,21 @@ const normalizePrivateIpv4 = (host: string) => {
   return parts.join(".");
 };
 
+const isTailscaleIpv4 = (host: string) => {
+  const value = normalizePrivateIpv4(host);
+  if (!value) return false;
+  const [, second] = value.split(".").map((item) => Number(item));
+  return value.startsWith("100.") && second >= 64 && second <= 127;
+};
+
+const isTailscaleBaseUrl = (value: string) => {
+  try {
+    return isTailscaleIpv4(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+};
+
 const subnetFromBaseUrl = (value: string) => {
   try {
     const host = normalizePrivateIpv4(new URL(value).hostname);
@@ -247,7 +266,7 @@ const discoverySubnets = (base: string) => {
 };
 
 const friendlyFetchError = () =>
-  "Không kết nối được với máy tính. Máy tính chưa bật ATAssistant hoặc điện thoại và máy tính chưa cùng WiFi.";
+  "Không kết nối được với máy tính. Hãy mở ATAssistant và dùng cùng WiFi hoặc bật Tailscale trên cả điện thoại và máy tính.";
 
 const isConnectionErrorMessage = (message: string) =>
   /failed to fetch|load failed|networkerror|network error|offline|timeout|timed out|cleartext|econn|java\.net|failed to connect|unable to resolve/i.test(
@@ -664,7 +683,7 @@ function App() {
     if (discovering) return;
     setDiscovering(true);
     setDiscoveredComputers([]);
-    setConnectionText("Đang tìm máy tính trong WiFi");
+    setConnectionText("Đang tìm máy tính");
     const found: DiscoveredComputer[] = [];
     const seen = new Set<string>();
     const remember = (item: DiscoveredComputer) => {
@@ -690,7 +709,8 @@ function App() {
             baseUrl: candidate,
             name: data.name || "ATAssistant",
             pairCode: String(data.pairCode || ""),
-            status: data.status || "ready"
+            status: data.status || "ready",
+            kind: isTailscaleBaseUrl(candidate) ? "tailscale" : "lan"
           });
         }
       } catch {
@@ -698,6 +718,14 @@ function App() {
       }
     };
     try {
+      const savedBase = normalizeBaseUrl(baseUrl || localStorage.getItem(LAST_ADDRESS_KEY) || "");
+      if (savedBase) {
+        await probe(savedBase);
+      }
+      if (found.length === 0 && isTailscaleBaseUrl(savedBase)) {
+        setConnectionText("Không tìm thấy máy tính qua Tailscale");
+        return;
+      }
       for (const subnet of discoverySubnets(baseUrl)) {
         const hosts = Array.from({ length: 254 }, (_, index) => `http://${subnet}.${index + 1}:8765`);
         let cursor = 0;
@@ -1119,7 +1147,7 @@ function App() {
               <span>{connectionText}</span>
             </div>
           </div>
-          <p className="lead">AT Remote sẽ tự tìm máy tính đang bật ATAssistant trong cùng WiFi. Nếu chưa thấy, bạn vẫn có thể nhập địa chỉ dưới mã kết nối trên máy tính.</p>
+          <p className="lead">AT Remote sẽ tự tìm máy tính trong cùng WiFi. Nếu dùng từ xa, bật Tailscale trên điện thoại và nhập địa chỉ Tailscale đang hiện trên ATAssistant.</p>
 
           {step === "pending" ? (
             <div className="waiting-panel">
@@ -1134,7 +1162,7 @@ function App() {
             <form className="connect-form" onSubmit={submitPair}>
               <button type="button" className="scan-button" onClick={scanForComputers} disabled={discovering}>
                 {discovering ? <RefreshCw className="spin" size={18} /> : <Search size={18} />}
-                {discovering ? "Đang tìm máy tính" : "Tìm máy tính trong WiFi"}
+                {discovering ? "Đang tìm máy tính" : "Tìm máy tính"}
               </button>
               {discoveredComputers.length > 0 ? (
                 <div className="computer-list">
@@ -1152,7 +1180,7 @@ function App() {
                       <Laptop size={18} />
                       <span>
                         <strong>{computer.name}</strong>
-                        <small>{computer.baseUrl}</small>
+                        <small>{computer.kind === "tailscale" ? "Tailscale · " : ""}{computer.baseUrl}</small>
                       </span>
                       {normalizeBaseUrl(baseUrl) === computer.baseUrl ? <Check size={18} /> : null}
                     </button>
@@ -1169,9 +1197,9 @@ function App() {
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.target.value)}
                   inputMode="url"
-                  placeholder="http://192.168.1.11:8765"
+                  placeholder="http://192.168.1.11:8765 hoặc http://100.x.x.x:8765"
                 />
-                <span className="field-hint">Dùng đúng địa chỉ nằm dưới mã kết nối trên ATAssistant.</span>
+                <span className="field-hint">Dùng địa chỉ WiFi/LAN khi ở gần máy tính, hoặc địa chỉ Tailscale khi dùng từ xa.</span>
               </label>
               <label>
                 Mã kết nối
@@ -1192,7 +1220,7 @@ function App() {
 
           <div className="hint-list">
             <div><span>1</span><p>Mở ATAssistant và bật Kết nối điện thoại.</p></div>
-            <div><span>2</span><p>Điện thoại và máy tính cần cùng WiFi cho bản đầu tiên.</p></div>
+            <div><span>2</span><p>Dùng cùng WiFi hoặc bật Tailscale trên cả điện thoại và máy tính.</p></div>
             <div><span>3</span><p>Nếu báo mất kết nối, kiểm tra lại địa chỉ đang nhập.</p></div>
           </div>
         </section>
@@ -1483,7 +1511,7 @@ function PermissionsView({
           <div className="empty-state compact">
             <Shield size={36} />
             <h2>Chưa đọc được quyền</h2>
-            <p>Hãy thử làm mới khi điện thoại và máy tính cùng WiFi.</p>
+            <p>Hãy thử làm mới khi dùng cùng WiFi hoặc đã bật Tailscale trên cả hai thiết bị.</p>
           </div>
         ) : (
           groups.map((group) => (

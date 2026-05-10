@@ -20,6 +20,11 @@ def _print_status(bridge: MobileRemoteBridge) -> None:
     print("Mở trên điện thoại:")
     for url in snapshot.get("pairingUrls") or snapshot.get("urls") or []:
         print(f"  {url}")
+    tailscale_urls = snapshot.get("tailscalePairingUrls") or []
+    if tailscale_urls:
+        print("Dùng từ xa qua Tailscale:")
+        for url in tailscale_urls:
+            print(f"  {url}")
     print("")
     print("Lệnh trong cửa sổ này: pending, approve <id>, reject <id>, devices, code, quit")
 

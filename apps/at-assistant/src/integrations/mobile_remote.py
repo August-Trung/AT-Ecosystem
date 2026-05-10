@@ -4,6 +4,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import ipaddress
 import json
 import mimetypes
 import os
@@ -25,9 +26,15 @@ from src.core.app_paths import ensure_app_data_dir
 from src.core.engine import Engine
 from src.core.result import ActionResult, ActionStatus, ErrorCode
 
+try:
+    import psutil
+except Exception:  # pragma: no cover
+    psutil = None
+
 
 DEFAULT_REMOTE_HOST = "0.0.0.0"
 DEFAULT_REMOTE_PORT = 8765
+TAILSCALE_IPV4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 PAIR_REQUEST_TTL_SECONDS = 10 * 60
 REMOTE_FILE_TTL_SECONDS = 60 * 60
 LAST_SEEN_TOUCH_INTERVAL_SECONDS = 30
@@ -286,15 +293,54 @@ def _at_remote_dist_dir() -> Path | None:
     return dist if dist.exists() else None
 
 
-def lan_addresses() -> list[str]:
-    values: list[str] = []
+def _ipv4_address(value: str) -> ipaddress.IPv4Address | None:
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return None
+    return address if isinstance(address, ipaddress.IPv4Address) else None
 
-    def add(value: str) -> None:
+
+def _is_tailscale_address(value: str) -> bool:
+    address = _ipv4_address(value)
+    return bool(address and address in TAILSCALE_IPV4_NETWORK)
+
+
+def network_addresses() -> list[dict[str, str]]:
+    values: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(value: str, adapter: str = "") -> None:
         value = str(value or "").strip()
         if not value or value.startswith("127.") or value == "0.0.0.0":
             return
-        if value not in values:
-            values.append(value)
+        address = _ipv4_address(value)
+        if not address or address.is_loopback or address.is_link_local or address.is_multicast:
+            return
+        adapter_name = str(adapter or "").strip()
+        is_tailscale = _is_tailscale_address(value) or "tailscale" in adapter_name.casefold()
+        if not is_tailscale and not address.is_private:
+            return
+        if value in seen:
+            return
+        seen.add(value)
+        values.append(
+            {
+                "address": value,
+                "kind": "tailscale" if is_tailscale else "lan",
+                "label": "Tailscale" if is_tailscale else "WiFi/LAN",
+                "adapter": adapter_name,
+            }
+        )
+
+    if psutil is not None:
+        try:
+            for adapter_name, items in psutil.net_if_addrs().items():
+                for item in items:
+                    if getattr(item, "family", None) == socket.AF_INET:
+                        add(str(getattr(item, "address", "") or ""), adapter_name)
+        except Exception:
+            pass
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -308,8 +354,16 @@ def lan_addresses() -> list[str]:
     except Exception:
         pass
     if not values:
-        values.append("127.0.0.1")
+        values.append({"address": "127.0.0.1", "kind": "local", "label": "Máy này", "adapter": ""})
     return values
+
+
+def lan_addresses() -> list[str]:
+    return [item["address"] for item in network_addresses() if item.get("kind") in {"lan", "local"}]
+
+
+def tailscale_addresses() -> list[str]:
+    return [item["address"] for item in network_addresses() if item.get("kind") == "tailscale"]
 
 
 class MobileRemoteSettingsStore:
@@ -513,29 +567,37 @@ class MobileRemoteBridge:
             self._pending.clear()
             return self._pair_code
 
-    def urls(self) -> list[str]:
-        return [f"http://{address}:{self.port}" for address in lan_addresses()]
+    def urls(self, kind: str | None = None) -> list[str]:
+        addresses = network_addresses()
+        if kind:
+            addresses = [item for item in addresses if item.get("kind") == kind]
+        return [f"http://{item['address']}:{self.port}" for item in addresses]
 
-    def pairing_urls(self) -> list[str]:
-        return [f"{url}/?code={self._pair_code}" for url in self.urls()]
+    def pairing_urls(self, kind: str | None = None) -> list[str]:
+        return [f"{url}/?code={self._pair_code}" for url in self.urls(kind)]
 
-    def deep_link_urls(self) -> list[str]:
+    def deep_link_urls(self, kind: str | None = None) -> list[str]:
         return [
             f"atremote://pair?base={quote(url, safe='')}&code={quote(self._pair_code)}"
-            for url in self.urls()
+            for url in self.urls(kind)
         ]
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             self._cleanup_pending_locked()
+            addresses = network_addresses()
             return {
                 "running": self.is_running,
                 "host": self._bound_host or str(self._settings.get("host") or DEFAULT_REMOTE_HOST),
                 "port": self.port,
                 "pairCode": self._pair_code,
+                "networkAddresses": addresses,
                 "urls": self.urls(),
                 "pairingUrls": self.pairing_urls(),
                 "deepLinkUrls": self.deep_link_urls(),
+                "tailscaleUrls": self.urls("tailscale"),
+                "tailscalePairingUrls": self.pairing_urls("tailscale"),
+                "tailscaleDeepLinkUrls": self.deep_link_urls("tailscale"),
                 "devices": [_public_device(item) for item in self._settings.get("paired_devices") or []],
                 "pending": [item.to_public() for item in self._pending.values() if item.status == "pending"],
                 "staticAppReady": _at_remote_dist_dir() is not None,
