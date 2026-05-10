@@ -18,24 +18,24 @@ from src.integrations.mobile_remote import (
 
 
 REMOTE_PALETTE = {
-    "BG_PRIMARY": "#f6f8fb",
+    "BG_PRIMARY": "#f7f8ff",
     "BG_SECONDARY": "#ffffff",
-    "BG_INPUT": "#f9fbfd",
-    "CARD_SOFT": "#edf8f6",
-    "CARD_BLUE": "#eef4ff",
-    "FG_PRIMARY": "#172033",
-    "FG_SECONDARY": "#5f6f86",
-    "FG_SUCCESS": "#087443",
-    "FG_ERROR": "#a2163b",
-    "ACCENT": "#0f8f83",
-    "ACCENT_HOVER": "#0b746b",
-    "ACCENT_BLUE": "#2f6fed",
-    "ACCENT_BLUE_HOVER": "#2658be",
-    "ACCENT_CANCEL": "#fff1f3",
-    "ACCENT_CANCEL_HOVER": "#ffdce4",
-    "ACCENT_CHOICE": "#e8eef5",
-    "ACCENT_CHOICE_HOVER": "#d9e3ee",
-    "BORDER_COLOR": "#d9e3ee",
+    "BG_INPUT": "#fbfcff",
+    "CARD_SOFT": "#fff2ed",
+    "CARD_BLUE": "#f0edff",
+    "FG_PRIMARY": "#151321",
+    "FG_SECONDARY": "#667085",
+    "FG_SUCCESS": "#0f8b5f",
+    "FG_ERROR": "#e11d48",
+    "ACCENT": "#ff5a3d",
+    "ACCENT_HOVER": "#d9432a",
+    "ACCENT_BLUE": "#7c3aed",
+    "ACCENT_BLUE_HOVER": "#6025d1",
+    "ACCENT_CANCEL": "#fff0f4",
+    "ACCENT_CANCEL_HOVER": "#ffd9e3",
+    "ACCENT_CHOICE": "#edf1f8",
+    "ACCENT_CHOICE_HOVER": "#dfe6f1",
+    "BORDER_COLOR": "#dde3f0",
 }
 
 
@@ -167,7 +167,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             shell,
             fg_color=ui["CARD_SOFT"],
             border_width=1,
-            border_color="#cce9e4",
+            border_color="#ffd2c4",
             corner_radius=8,
         )
         pair_box.grid(row=3, column=0, sticky="ew", pady=(0, 12))

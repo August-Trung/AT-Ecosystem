@@ -1,26 +1,28 @@
 :root {
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f6f8fb;
-  color: #172033;
+  background: #f7f8ff;
+  color: #151321;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 
-  --bg: #f6f8fb;
+  --bg: #f7f8ff;
   --surface: #ffffff;
-  --surface-soft: #edf7f6;
-  --ink: #172033;
-  --muted: #607087;
-  --line: #d9e3ee;
-  --teal: #0f8f83;
-  --teal-dark: #0b746b;
-  --blue: #2f6fed;
-  --amber: #f59e0b;
-  --danger: #d92d52;
-  --danger-soft: #fff1f3;
-  --success-soft: #eafaf3;
-  --shadow: 0 14px 38px rgba(25, 42, 70, 0.12);
+  --surface-soft: #fff2ed;
+  --ink: #151321;
+  --muted: #667085;
+  --line: #dde3f0;
+  --teal: #ff5a3d;
+  --teal-dark: #d9432a;
+  --blue: #7c3aed;
+  --amber: #f6a609;
+  --danger: #e11d48;
+  --danger-soft: #fff0f4;
+  --success: #0f8b5f;
+  --success-soft: #e9fbf3;
+  --choice: #edf1f8;
+  --shadow: 0 16px 42px rgba(21, 19, 33, 0.14);
 }
 
 * {
@@ -63,7 +65,7 @@ button:disabled {
   align-items: stretch;
   justify-content: center;
   padding: max(14px, env(safe-area-inset-top)) 24px max(14px, env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, #e6f5f3 0 148px, var(--bg) 148px);
+  background: linear-gradient(180deg, #fff0e8 0 148px, var(--bg) 148px);
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -75,7 +77,7 @@ button:disabled {
   max-width: 430px;
   min-height: calc(100dvh - 28px);
   background: var(--surface);
-  border: 1px solid rgba(112, 131, 154, 0.22);
+  border: 1px solid rgba(102, 112, 133, 0.22);
   border-radius: 8px;
   box-shadow: var(--shadow);
   padding: 18px;
@@ -106,7 +108,7 @@ button:disabled {
   border-radius: 8px;
   background: linear-gradient(135deg, var(--teal), var(--blue));
   color: #ffffff;
-  box-shadow: 0 10px 22px rgba(15, 143, 131, 0.25);
+  box-shadow: 0 10px 24px rgba(255, 90, 61, 0.26);
   position: relative;
 }
 
@@ -170,7 +172,7 @@ button:disabled {
   border-radius: 999px;
   padding: 7px 12px;
   background: var(--success-soft);
-  color: #087443;
+  color: var(--success);
   font-weight: 800;
   font-size: 0.86rem;
   width: fit-content;
@@ -179,19 +181,19 @@ button:disabled {
 .status-pill.lost,
 .connection-badge.lost {
   background: var(--danger-soft);
-  color: #a2163b;
+  color: var(--danger);
 }
 
 .status-pill.neutral,
 .connection-badge.neutral {
-  background: #eaf2ff;
-  color: #2658be;
+  background: #f0edff;
+  color: var(--blue);
 }
 
 .status-pill.ready,
 .connection-badge.ready {
   background: var(--success-soft);
-  color: #087443;
+  color: var(--success);
 }
 
 .connect-form {
@@ -203,7 +205,7 @@ button:disabled {
 .connect-form label {
   display: grid;
   gap: 7px;
-  color: #344258;
+  color: #3f4656;
   font-weight: 800;
   font-size: 0.88rem;
 }
@@ -222,7 +224,7 @@ button:disabled {
 
 .connect-form input::placeholder,
 .composer textarea::placeholder {
-  color: #8a98aa;
+  color: #98a2b3;
 }
 
 .field-hint {
@@ -235,7 +237,7 @@ button:disabled {
 .connect-form input:focus,
 .composer textarea:focus {
   border-color: var(--teal);
-  box-shadow: 0 0 0 3px rgba(15, 143, 131, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 90, 61, 0.16);
 }
 
 .primary-button,
@@ -257,7 +259,7 @@ button:disabled {
 .send-button {
   background: var(--teal);
   color: #ffffff;
-  box-shadow: 0 10px 20px rgba(15, 143, 131, 0.2);
+  box-shadow: 0 10px 22px rgba(255, 90, 61, 0.22);
 }
 
 .primary-button:active,
@@ -267,7 +269,7 @@ button:disabled {
 
 .secondary-button,
 .ghost-button {
-  background: #e8eef5;
+  background: var(--choice);
   color: var(--ink);
 }
 
@@ -278,15 +280,15 @@ button:disabled {
 
 .danger-soft-button {
   background: var(--danger-soft);
-  color: #a2163b;
+  color: var(--danger);
 }
 
 .scan-button {
   min-height: 48px;
   border-radius: 8px;
-  background: #e9fbf8;
+  background: #fff4ed;
   color: var(--teal-dark);
-  border: 1px solid rgba(15, 143, 131, 0.28);
+  border: 1px solid rgba(255, 90, 61, 0.3);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -314,8 +316,8 @@ button:disabled {
 }
 
 .computer-list button.selected {
-  border-color: rgba(15, 143, 131, 0.42);
-  background: #f0fbf9;
+  border-color: rgba(255, 90, 61, 0.42);
+  background: #fff4ed;
 }
 
 .computer-list span {
@@ -352,7 +354,7 @@ button:disabled {
   display: grid;
   place-items: center;
   border-radius: 999px;
-  background: #eaf2ff;
+  background: #f0edff;
   color: var(--blue);
   font-size: 0.78rem;
   font-weight: 900;
@@ -430,13 +432,13 @@ button:disabled {
   border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--line);
-  box-shadow: 0 -10px 28px rgba(25, 42, 70, 0.1);
+  box-shadow: 0 -10px 28px rgba(21, 19, 33, 0.1);
 }
 
 .quick-actions button {
   min-height: 44px;
   border-radius: 8px;
-  background: #f4f7fb;
+  background: #fafbff;
   color: var(--ink);
   border: 1px solid var(--line);
   display: flex;
@@ -444,12 +446,12 @@ button:disabled {
   justify-content: flex-start;
   gap: 9px;
   padding: 0 12px;
-  box-shadow: 0 8px 22px rgba(25, 42, 70, 0.06);
+  box-shadow: 0 8px 22px rgba(21, 19, 33, 0.06);
 }
 
 .quick-actions button:first-child {
-  border-color: rgba(15, 143, 131, 0.28);
-  background: #f0fbf9;
+  border-color: rgba(255, 90, 61, 0.28);
+  background: #fff4ed;
 }
 
 .quick-actions button:last-child {
@@ -459,12 +461,12 @@ button:disabled {
 .quick-actions .change-computer-action {
   grid-column: 1 / -1;
   justify-content: center;
-  background: #eef3f8;
+  background: var(--choice);
   color: var(--muted);
 }
 
 .quick-actions svg {
-  color: var(--teal);
+  color: var(--blue);
   flex: 0 0 auto;
 }
 
@@ -498,7 +500,7 @@ button:disabled {
   color: var(--muted);
   gap: 8px;
   padding: 20px;
-  border: 1px dashed #cbd8e7;
+  border: 1px dashed #d8dfef;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.6);
 }
@@ -577,7 +579,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 13px;
-  box-shadow: 0 10px 26px rgba(25, 42, 70, 0.07);
+  box-shadow: 0 10px 26px rgba(21, 19, 33, 0.07);
 }
 
 .result-card h3 {
@@ -596,7 +598,7 @@ button:disabled {
   width: 100%;
   max-height: 420px;
   object-fit: contain;
-  background: #f7f9fc;
+  background: #fafbff;
   border-radius: 8px;
   border: 1px solid var(--line);
 }
@@ -618,7 +620,7 @@ button:disabled {
   display: grid;
   gap: 4px;
   border-radius: 8px;
-  background: #f2f6fa;
+  background: #f0f3f9;
   padding: 10px;
 }
 
@@ -683,7 +685,7 @@ button:disabled {
   padding: 12px;
   display: grid;
   gap: 10px;
-  box-shadow: 0 10px 26px rgba(25, 42, 70, 0.07);
+  box-shadow: 0 10px 26px rgba(21, 19, 33, 0.07);
 }
 
 .permission-row {
@@ -717,12 +719,12 @@ button:disabled {
 
 .permission-row.enabled span {
   background: var(--success-soft);
-  color: #087443;
+  color: var(--success);
 }
 
 .permission-row.disabled span {
   background: var(--danger-soft);
-  color: #a2163b;
+  color: var(--danger);
 }
 
 .card-title-row {
@@ -756,7 +758,7 @@ button:disabled {
 
 .copy-line code {
   display: block;
-  background: #f2f6fa;
+  background: #f0f3f9;
   border-radius: 8px;
   padding: 10px;
   color: var(--ink);
@@ -768,8 +770,8 @@ button:disabled {
   justify-self: start;
   min-height: 36px;
   border-radius: 8px;
-  background: #eaf2ff;
-  color: #2658be;
+  background: #f0edff;
+  color: var(--blue);
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -786,7 +788,7 @@ button:disabled {
 .metric {
   min-height: 68px;
   border-radius: 8px;
-  background: #f2f6fa;
+  background: #f0f3f9;
   padding: 10px;
   display: grid;
   align-content: center;
@@ -812,7 +814,7 @@ button:disabled {
 .mail-item {
   padding: 10px;
   border-radius: 8px;
-  background: #f7f9fc;
+  background: #fafbff;
   display: grid;
   gap: 4px;
 }
@@ -824,7 +826,7 @@ button:disabled {
 
 .confirm-card,
 .error-card {
-  border-color: #f8b4c3;
+  border-color: #fb9bb2;
   background: var(--danger-soft);
 }
 
@@ -856,7 +858,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px;
-  box-shadow: 0 -10px 30px rgba(25, 42, 70, 0.1);
+  box-shadow: 0 -10px 30px rgba(21, 19, 33, 0.1);
 }
 
 .composer textarea {
@@ -879,7 +881,7 @@ button:disabled {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: #eef3f8;
+  background: var(--choice);
   color: var(--muted);
 }
 
@@ -894,7 +896,7 @@ button:disabled {
   z-index: 50;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  background: rgba(9, 14, 24, 0.94);
+  background: rgba(17, 16, 26, 0.96);
   color: #ffffff;
   padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
 }
