@@ -594,6 +594,12 @@ class MobileRemoteBridge:
                 "command": command,
             },
         )
+        upload_card = {
+            "type": "file",
+            "title": "Tệp đã gửi",
+            "message": f"Đã lưu trên máy tính: {target.name}",
+            "file": uploaded_file,
+        }
 
         if command:
             display_command = f"{command}\nTệp: {target.name}"
@@ -615,25 +621,38 @@ class MobileRemoteBridge:
                 except Exception as exc:
                     result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
         else:
-            result = ActionResult.ok(
-                f"Đã nhận tệp từ điện thoại: {target.name}",
-                mobile_uploaded_file=str(target),
-                path=str(target),
-            )
+            result = ActionResult.ok("Tệp đã sẵn sàng.", mobile_uploaded_file=str(target))
+            response = mobile_payload_from_result(result)
+            response["cards"] = [upload_card]
+            response["files"] = [uploaded_file]
+            response["device"] = public_device
+
+            event_payload = {
+                "device": public_device,
+                "command": command,
+                "displayCommand": command,
+                "status": response.get("status"),
+                "result": result,
+                "payload": response,
+                "attachments": [uploaded_file],
+            }
+            self._emit("command_result", event_payload)
+            return response
 
         response = mobile_payload_from_result(
             result,
             file_resolver=lambda path, kind: self._register_file(path, public_device, kind=kind),
         )
+
+        def is_uploaded_file(public_file: dict[str, Any]) -> bool:
+            return public_file.get("id") == uploaded_file.get("id") or (
+                public_file.get("name") == uploaded_file.get("name") and public_file.get("size") == uploaded_file.get("size")
+            )
+
         response.setdefault("files", [])
-        response["files"].insert(0, uploaded_file)
-        upload_card = {
-            "type": "file",
-            "title": "Tệp đã gửi",
-            "message": f"Đã lưu trên máy tính: {target.name}",
-            "file": uploaded_file,
-        }
-        if not any(card.get("type") == "file" and (card.get("file") or {}).get("id") == uploaded_file["id"] for card in response.get("cards") or []):
+        if not any(is_uploaded_file(item) for item in response["files"]):
+            response["files"].insert(0, uploaded_file)
+        if not any(card.get("type") == "file" and is_uploaded_file(card.get("file") or {}) for card in response.get("cards") or []):
             response.setdefault("cards", []).insert(0, upload_card)
         response["device"] = public_device
 

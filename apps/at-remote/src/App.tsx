@@ -261,7 +261,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastCommand, setLastCommand] = useState("");
-  const [showQuickActions, setShowQuickActions] = useState(true);
+  const [showQuickActions, setShowQuickActions] = useState(false);
   const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -410,6 +410,7 @@ function App() {
   const disconnect = () => {
     clearConnection();
     setConnection(null);
+    setShowQuickActions(false);
     setConnectionStep("connect");
     setConnectionText("Kết nối với máy tính");
   };
@@ -709,18 +710,6 @@ function App() {
         </button>
       </header>
 
-      <section className={`quick-actions ${showQuickActions ? "open" : "closed"}`} aria-label="Nút nhanh">
-        {quickActions.map((action) => {
-          const Icon = action.icon;
-          return (
-            <button key={action.label} onClick={() => runQuickAction(action)} disabled={busy}>
-              <Icon size={18} />
-              <span>{action.label}</span>
-            </button>
-          );
-        })}
-      </section>
-
       <section className="conversation" ref={listRef}>
         {messages.length === 0 ? (
           <div className="empty-state">
@@ -764,6 +753,24 @@ function App() {
         )}
       </section>
 
+      {showQuickActions ? (
+        <section className="quick-actions" aria-label="Nút nhanh">
+          {quickActions.map((action) => {
+            const Icon = action.icon;
+            return (
+              <button key={action.label} onClick={() => runQuickAction(action)} disabled={busy}>
+                <Icon size={18} />
+                <span>{action.label}</span>
+              </button>
+            );
+          })}
+          <button className="change-computer-action" type="button" onClick={disconnect}>
+            <MonitorSmartphone size={18} />
+            <span>Đổi máy tính</span>
+          </button>
+        </section>
+      ) : null}
+
       <form className="composer" onSubmit={onSubmitCommand}>
         <input
           ref={fileInputRef}
@@ -806,10 +813,6 @@ function App() {
           <span>Gửi</span>
         </button>
       </form>
-
-      <button className="disconnect" onClick={disconnect}>
-        Đổi máy tính
-      </button>
 
       {imageViewer ? (
         <ImageViewer

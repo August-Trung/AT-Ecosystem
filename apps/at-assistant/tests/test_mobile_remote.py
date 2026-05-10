@@ -225,6 +225,35 @@ def test_mobile_remote_upload_saves_file_and_can_run_command(tmp_path, monkeypat
         bridge.stop()
 
 
+def test_mobile_remote_upload_without_command_returns_one_file_card(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = requests.post(
+            f"{base}/api/upload",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={
+                "name": "note.txt",
+                "mime": "text/plain",
+                "dataBase64": base64.b64encode(b"mobile upload").decode("ascii"),
+            },
+            timeout=3,
+        ).json()
+
+        file_cards = [card for card in payload["cards"] if card.get("type") == "file"]
+        assert payload["message"] == "Tệp đã sẵn sàng."
+        assert len(file_cards) == 1
+        assert file_cards[0]["title"] == "Tệp đã gửi"
+        assert len(payload["files"]) == 1
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_upload_blocks_dangerous_extensions(tmp_path, monkeypatch):
     bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
     bridge.start(host="127.0.0.1", port=0)
