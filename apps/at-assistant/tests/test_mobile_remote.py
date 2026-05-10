@@ -251,6 +251,33 @@ def test_mobile_remote_upload_blocks_dangerous_extensions(tmp_path, monkeypatch)
         bridge.stop()
 
 
+def test_mobile_remote_static_app_uses_fresh_cache_headers(tmp_path, monkeypatch):
+    dist = tmp_path / "remote_dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><div>AT Remote</div>", encoding="utf-8")
+    (dist / "sw.js").write_text("self.addEventListener('fetch', () => {})", encoding="utf-8")
+    (dist / "manifest.webmanifest").write_text("{}", encoding="utf-8")
+    (assets / "app.js").write_text("console.log('at-remote')", encoding="utf-8")
+    monkeypatch.setattr("src.integrations.mobile_remote._at_remote_dist_dir", lambda: dist)
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        index = requests.get(f"{base}/", timeout=3)
+        worker = requests.get(f"{base}/sw.js", timeout=3)
+        manifest = requests.get(f"{base}/manifest.webmanifest", timeout=3)
+        asset = requests.get(f"{base}/assets/app.js", timeout=3)
+
+        assert index.headers["Cache-Control"] == "no-store"
+        assert worker.headers["Cache-Control"] == "no-store"
+        assert manifest.headers["Cache-Control"] == "no-store"
+        assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_confirmation_payload_has_phone_buttons():
     payload = mobile_payload_from_result(ActionResult.need_confirm("Bạn có chắc muốn tắt máy?", "system_power", {"action": "shutdown"}))
 

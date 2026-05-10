@@ -266,6 +266,16 @@ function App() {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const stepRef = useRef<ConnectionStep>("checking");
+
+  const setConnectionStep = useCallback((next: ConnectionStep) => {
+    stepRef.current = next;
+    setStep(next);
+  }, []);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   const activeBaseUrl = connection?.baseUrl || baseUrl;
   const statusTone =
@@ -275,7 +285,7 @@ function App() {
     saveConnection(saved);
     setConnection(saved);
     setPairRequestId("");
-    setStep("connected");
+    setConnectionStep("connected");
     setConnectionText("Đã kết nối");
     setMessages((current) =>
       current.length
@@ -295,28 +305,31 @@ function App() {
             }
           ]
     );
-  }, []);
+  }, [setConnectionStep]);
 
   const checkHealth = useCallback(async () => {
-    if (step === "pending") {
+    const isWaitingForApproval = () => stepRef.current === "pending";
+    if (isWaitingForApproval()) {
       return;
     }
     if (!activeBaseUrl.trim()) {
+      if (isWaitingForApproval()) return;
       setConnectionText(connection ? "Mất kết nối" : "Kết nối với máy tính");
-      setStep(connection ? "connected" : "connect");
+      setConnectionStep(connection ? "connected" : "connect");
       return;
     }
     try {
       const response = await requestJson<Record<string, unknown>>(`${activeBaseUrl}/api/health`);
       if (!response.ok) throw new Error("offline");
+      if (isWaitingForApproval()) return;
       setConnectionText(connection ? "Đã kết nối" : "Kết nối với máy tính");
-      setStep(connection ? "connected" : "connect");
+      setConnectionStep(connection ? "connected" : "connect");
     } catch {
+      if (isWaitingForApproval()) return;
       setConnectionText("Mất kết nối");
-      if (connection) setStep("connected");
-      else setStep("connect");
+      setConnectionStep(connection ? "connected" : "connect");
     }
-  }, [activeBaseUrl, connection, step]);
+  }, [activeBaseUrl, connection, setConnectionStep]);
 
   useEffect(() => {
     checkHealth();
@@ -344,7 +357,7 @@ function App() {
           });
         }
         if (data.status === "rejected") {
-          setStep("connect");
+          setConnectionStep("connect");
           setConnectionText("Mất kết nối");
         }
       } catch {
@@ -352,16 +365,16 @@ function App() {
       }
     }, 1400);
     return () => window.clearInterval(id);
-  }, [baseUrl, deviceName, enterConnected, pairRequestId, step]);
+  }, [baseUrl, deviceName, enterConnected, pairRequestId, setConnectionStep, step]);
 
   const submitPair = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (busy || step === "pending") return;
+    if (busy || stepRef.current === "pending") return;
     const cleanBase = normalizeBaseUrl(baseUrl);
     setBaseUrl(cleanBase);
     if (!/^https?:\/\/[^/]+/i.test(cleanBase)) {
       setConnectionText("Nhập đúng địa chỉ hiển thị trên ATAssistant.");
-      setStep("connect");
+      setConnectionStep("connect");
       return;
     }
     localStorage.setItem(LAST_ADDRESS_KEY, cleanBase);
@@ -384,11 +397,11 @@ function App() {
       }
       if (!data.requestId) throw new Error("Máy tính chưa nhận được yêu cầu kết nối.");
       setPairRequestId(String(data.requestId || ""));
-      setStep("pending");
+      setConnectionStep("pending");
       setConnectionText("Đang chờ xác nhận trên ATAssistant");
     } catch (error) {
       setConnectionText(friendlyConnectionError(error));
-      setStep("connect");
+      setConnectionStep("connect");
     } finally {
       setBusy(false);
     }
@@ -397,7 +410,7 @@ function App() {
   const disconnect = () => {
     clearConnection();
     setConnection(null);
-    setStep("connect");
+    setConnectionStep("connect");
     setConnectionText("Kết nối với máy tính");
   };
 
@@ -472,7 +485,7 @@ function App() {
 
   const uploadFile = async (file: File, command: string) => {
     if (!connection) {
-      setStep("connect");
+      setConnectionStep("connect");
       return;
     }
     setBusy(true);
@@ -532,7 +545,7 @@ function App() {
       return;
     }
     if (!connection) {
-      setStep("connect");
+      setConnectionStep("connect");
       return;
     }
     setLastCommand(clean);
@@ -631,7 +644,7 @@ function App() {
               <Smartphone size={38} />
               <h2>Đang chờ xác nhận trên ATAssistant</h2>
               <p>Trên máy tính, mở Kết nối điện thoại và chọn Cho phép.</p>
-              <button className="ghost-button" onClick={() => setStep("connect")}>
+              <button className="ghost-button" onClick={() => setConnectionStep("connect")}>
                 Hủy
               </button>
             </div>
