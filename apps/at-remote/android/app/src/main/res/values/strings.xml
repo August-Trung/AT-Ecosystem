@@ -3,5 +3,5 @@
     <string name="app_name">AT Remote</string>
     <string name="title_activity_main">AT Remote</string>
     <string name="package_name">com.augusttrung.atremote</string>
-    <string name="custom_url_scheme">com.augusttrung.atremote</string>
+    <string name="custom_url_scheme">atremote</string>
 </resources>

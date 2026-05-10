@@ -242,6 +242,7 @@ button:disabled {
 .send-button,
 .secondary-button,
 .danger-button,
+.danger-soft-button,
 .ghost-button {
   min-height: 46px;
   border-radius: 8px;
@@ -273,6 +274,61 @@ button:disabled {
 .danger-button {
   background: var(--danger);
   color: #ffffff;
+}
+
+.danger-soft-button {
+  background: var(--danger-soft);
+  color: #a2163b;
+}
+
+.scan-button {
+  min-height: 48px;
+  border-radius: 8px;
+  background: #e9fbf8;
+  color: var(--teal-dark);
+  border: 1px solid rgba(15, 143, 131, 0.28);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.computer-list {
+  display: grid;
+  gap: 8px;
+}
+
+.computer-list button {
+  min-height: 58px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  text-align: left;
+}
+
+.computer-list button.selected {
+  border-color: rgba(15, 143, 131, 0.42);
+  background: #f0fbf9;
+}
+
+.computer-list span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.computer-list small {
+  color: var(--muted);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hint-list {
@@ -429,6 +485,10 @@ button:disabled {
   -webkit-overflow-scrolling: touch;
 }
 
+.conversation.panel-view {
+  gap: 10px;
+}
+
 .empty-state {
   min-height: 38vh;
   display: grid;
@@ -441,6 +501,10 @@ button:disabled {
   border: 1px dashed #cbd8e7;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.6);
+}
+
+.empty-state.compact {
+  min-height: 210px;
 }
 
 .empty-state h2,
@@ -574,8 +638,91 @@ button:disabled {
   gap: 8px;
 }
 
+.file-actions.four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .file-actions button {
   min-height: 40px;
+}
+
+.library-panel,
+.permission-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.panel-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.panel-toolbar button {
+  min-height: 42px;
+}
+
+.panel-message {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  font-weight: 700;
+}
+
+.file-list,
+.permission-list {
+  display: grid;
+  gap: 10px;
+}
+
+.file-row,
+.permission-row {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  box-shadow: 0 10px 26px rgba(25, 42, 70, 0.07);
+}
+
+.permission-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.permission-row h3,
+.permission-row p {
+  margin: 0;
+}
+
+.permission-row h3 {
+  font-size: 0.96rem;
+}
+
+.permission-row p {
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.42;
+  font-size: 0.86rem;
+}
+
+.permission-row span {
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 0.76rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.permission-row.enabled span {
+  background: var(--success-soft);
+  color: #087443;
+}
+
+.permission-row.disabled span {
+  background: var(--danger-soft);
+  color: #a2163b;
 }
 
 .card-title-row {

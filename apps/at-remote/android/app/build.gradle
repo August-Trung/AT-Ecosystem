@@ -1,5 +1,16 @@
 apply plugin: 'com.android.application'
 
+def signingProps = new Properties()
+def signingPropsFile = rootProject.file('signing.properties')
+if (signingPropsFile.exists()) {
+    signingPropsFile.withInputStream { signingProps.load(it) }
+}
+def releaseStoreFile = signingProps['storeFile'] ?: System.getenv('AT_REMOTE_KEYSTORE')
+def releaseStorePassword = signingProps['storePassword'] ?: System.getenv('AT_REMOTE_KEYSTORE_PASSWORD')
+def releaseKeyAlias = signingProps['keyAlias'] ?: System.getenv('AT_REMOTE_KEY_ALIAS')
+def releaseKeyPassword = signingProps['keyPassword'] ?: System.getenv('AT_REMOTE_KEY_PASSWORD')
+def hasReleaseSigning = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
 android {
     namespace "com.augusttrung.atremote"
     compileSdk rootProject.ext.compileSdkVersion
@@ -16,8 +27,21 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (hasReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

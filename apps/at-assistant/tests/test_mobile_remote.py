@@ -257,6 +257,81 @@ def test_mobile_remote_upload_without_command_returns_one_file_card(tmp_path, mo
         bridge.stop()
 
 
+def test_mobile_remote_lists_and_deletes_uploaded_files(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        requests.post(
+            f"{base}/api/upload",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={
+                "name": "note.txt",
+                "mime": "text/plain",
+                "dataBase64": base64.b64encode(b"mobile upload").decode("ascii"),
+            },
+            timeout=3,
+        )
+
+        listed = requests.get(f"{base}/api/uploads", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+        assert listed["ok"] is True
+        assert listed["files"][0]["name"] == "note.txt"
+
+        deleted = requests.post(
+            f"{base}/api/uploads/delete",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"name": "note.txt"},
+            timeout=3,
+        ).json()
+        assert deleted["ok"] is True
+
+        listed_again = requests.get(f"{base}/api/uploads", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+        assert listed_again["files"] == []
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_enforces_permission_groups(tmp_path, monkeypatch):
+    engine = _FakeEngine()
+    bridge = MobileRemoteBridge(engine, settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+        device = bridge.snapshot()["devices"][0]
+
+        permissions = requests.get(f"{base}/api/permissions", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+        assert permissions["ok"] is True
+        assert {item["key"]: item["enabled"] for item in permissions["groups"]}["system_power"] is False
+
+        denied = requests.post(
+            f"{base}/api/command",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"command": "tat may"},
+            timeout=3,
+        ).json()
+        assert denied["status"] == "error"
+        assert engine.calls == []
+
+        bridge.update_device_permissions(device["id"], {**device["permissions"], "system_power": True})
+        allowed = requests.post(
+            f"{base}/api/command",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"command": "tat may"},
+            timeout=3,
+        ).json()
+        assert allowed["requiresConfirmation"] is True
+        assert engine.calls == [("tat may", "mobile")]
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_upload_blocks_dangerous_extensions(tmp_path, monkeypatch):
     bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
     bridge.start(host="127.0.0.1", port=0)

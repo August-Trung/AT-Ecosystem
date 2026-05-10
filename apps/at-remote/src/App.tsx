@@ -1,3 +1,4 @@
+import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import {
   BatteryCharging,
@@ -7,8 +8,11 @@ import {
   Cpu,
   Download,
   FileText,
+  FolderOpen,
   Hash,
+  History,
   KeyRound,
+  Laptop,
   Mail,
   Menu,
   MonitorSmartphone,
@@ -16,10 +20,13 @@ import {
   QrCode,
   RefreshCw,
   RotateCcw,
+  Search,
   Send,
   Share2,
+  Shield,
   ShieldCheck,
   Smartphone,
+  Trash2,
   WifiOff,
   X,
   ZoomIn,
@@ -29,6 +36,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 type ConnectionStep = "checking" | "connect" | "pending" | "connected";
 type MessageRole = "user" | "assistant";
+type AppView = "chat" | "files" | "permissions";
 
 type MobileButton = {
   label: string;
@@ -45,6 +53,8 @@ type RemoteFile = {
   sizeLabel?: string;
   kind?: string;
   downloadUrl: string;
+  savedAt?: string;
+  storageName?: string;
 };
 
 type MobileCard = {
@@ -94,12 +104,16 @@ type QuickAction = {
   command?: string;
   prefix?: string;
   suffix?: string;
+  view?: AppView;
+  action?: "clear-history";
 };
 
 type JsonRequestOptions = {
   method?: "GET" | "POST";
   headers?: Record<string, string>;
   data?: unknown;
+  connectTimeout?: number;
+  readTimeout?: number;
 };
 
 type ImageViewerState = {
@@ -109,9 +123,36 @@ type ImageViewerState = {
   file?: RemoteFile;
 };
 
+type HealthPayload = {
+  ok?: boolean;
+  name?: string;
+  status?: string;
+  pairCode?: string;
+  urls?: string[];
+  pairingUrls?: string[];
+  deepLinkUrls?: string[];
+  staticAppReady?: boolean;
+};
+
+type DiscoveredComputer = {
+  baseUrl: string;
+  name: string;
+  pairCode: string;
+  status: string;
+};
+
+type PermissionGroup = {
+  key: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
 const STORAGE_KEY = "atRemoteConnection";
 const LAST_ADDRESS_KEY = "atRemoteAddress";
 const DEVICE_NAME_KEY = "atRemoteDeviceName";
+const CHAT_HISTORY_PREFIX = "atRemoteChatHistory:";
+const MAX_STORED_MESSAGES = 120;
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -131,6 +172,37 @@ const currentLanBaseUrl = () => {
   return `${protocol}//${host}:8765`;
 };
 
+const isAndroidDevice = () => /android/i.test(navigator.userAgent || "") || Capacitor.getPlatform() === "android";
+
+const pairDeepLink = (base: string, code: string) =>
+  `atremote://pair?base=${encodeURIComponent(normalizeBaseUrl(base))}&code=${encodeURIComponent(code || "")}`;
+
+const parsePairUrl = (rawUrl: string) => {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "atremote:" && url.hostname === "pair") {
+      return {
+        base: normalizeBaseUrl(url.searchParams.get("base") || ""),
+        code: url.searchParams.get("code") || ""
+      };
+    }
+    if (url.searchParams.has("code")) {
+      const inferredBase =
+        url.port && url.port !== "8765"
+          ? `${url.protocol}//${url.hostname}:8765`
+          : `${url.protocol}//${url.host}`;
+      const base = url.searchParams.get("base") || url.searchParams.get("baseUrl") || inferredBase;
+      return {
+        base: normalizeBaseUrl(base),
+        code: url.searchParams.get("code") || ""
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
 const defaultBaseUrl = () => {
   const params = new URLSearchParams(window.location.search);
   const explicitBase = params.get("base") || params.get("baseUrl");
@@ -143,6 +215,29 @@ const defaultBaseUrl = () => {
   const saved = localStorage.getItem(LAST_ADDRESS_KEY);
   if (saved) return saved;
   return lanBase;
+};
+
+const normalizePrivateIpv4 = (host: string) => {
+  const value = String(host || "").trim();
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(value)) return "";
+  const parts = value.split(".").map((item) => Number(item));
+  if (parts.some((item) => !Number.isInteger(item) || item < 0 || item > 255)) return "";
+  return parts.join(".");
+};
+
+const subnetFromBaseUrl = (value: string) => {
+  try {
+    const host = normalizePrivateIpv4(new URL(value).hostname);
+    if (!host) return "";
+    return host.split(".").slice(0, 3).join(".");
+  } catch {
+    return "";
+  }
+};
+
+const discoverySubnets = (base: string) => {
+  const preferred = subnetFromBaseUrl(base) || subnetFromBaseUrl(localStorage.getItem(LAST_ADDRESS_KEY) || "") || "192.168.1";
+  return Array.from(new Set([preferred, "192.168.1", "192.168.0", "10.0.0", "10.0.1"]));
 };
 
 const friendlyFetchError = () =>
@@ -183,8 +278,8 @@ const requestJson = async <T,>(url: string, options: JsonRequestOptions = {}) =>
       headers,
       data: options.data,
       responseType: "json",
-      connectTimeout: 5000,
-      readTimeout: 20000
+      connectTimeout: options.connectTimeout ?? 5000,
+      readTimeout: options.readTimeout ?? 20000
     });
     return {
       ok: response.status >= 200 && response.status < 300,
@@ -193,17 +288,43 @@ const requestJson = async <T,>(url: string, options: JsonRequestOptions = {}) =>
     };
   }
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: options.data === undefined ? undefined : JSON.stringify(options.data),
-    cache: "no-store"
-  });
-  return {
-    ok: response.ok,
-    status: response.status,
-    data: (await response.json()) as T
-  };
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.readTimeout ?? options.connectTimeout ?? 20000);
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: options.data === undefined ? undefined : JSON.stringify(options.data),
+      cache: "no-store",
+      signal: controller.signal
+    });
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: (await response.json()) as T
+    };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+};
+
+const readChatHistory = (baseUrl: string): ChatMessage[] => {
+  try {
+    const raw = localStorage.getItem(`${CHAT_HISTORY_PREFIX}${normalizeBaseUrl(baseUrl)}`);
+    const parsed = raw ? (JSON.parse(raw) as ChatMessage[]) : [];
+    return Array.isArray(parsed) ? parsed.filter((item) => item && !item.pending).slice(-MAX_STORED_MESSAGES) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveChatHistory = (baseUrl: string, messages: ChatMessage[]) => {
+  const clean = messages.filter((item) => !item.pending).slice(-MAX_STORED_MESSAGES);
+  localStorage.setItem(`${CHAT_HISTORY_PREFIX}${normalizeBaseUrl(baseUrl)}`, JSON.stringify(clean));
+};
+
+const clearChatHistory = (baseUrl: string) => {
+  localStorage.removeItem(`${CHAT_HISTORY_PREFIX}${normalizeBaseUrl(baseUrl)}`);
 };
 
 const readSavedConnection = (): SavedConnection | null => {
@@ -251,6 +372,20 @@ const downloadBlob = (blob: Blob, name: string) => {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
+const connectedWelcomeMessage = (): ChatMessage => ({
+  id: newId(),
+  role: "assistant",
+  text: "Đã kết nối với ATAssistant.",
+  time: timeLabel(),
+  cards: [
+    {
+      type: "message",
+      title: "Đã kết nối",
+      message: "Bạn có thể nhập yêu cầu hoặc dùng các nút nhanh."
+    }
+  ]
+});
+
 function App() {
   const [baseUrl, setBaseUrl] = useState(defaultBaseUrl());
   const [deviceName, setDeviceName] = useState(
@@ -267,11 +402,20 @@ function App() {
   const [lastCommand, setLastCommand] = useState("");
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
+  const [view, setView] = useState<AppView>("chat");
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredComputers, setDiscoveredComputers] = useState<DiscoveredComputer[]>([]);
+  const [uploads, setUploads] = useState<RemoteFile[]>([]);
+  const [uploadsBusy, setUploadsBusy] = useState(false);
+  const [uploadsMessage, setUploadsMessage] = useState("");
+  const [permissions, setPermissions] = useState<PermissionGroup[]>([]);
+  const [permissionsBusy, setPermissionsBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const stepRef = useRef<ConnectionStep>("checking");
   const stickToBottomRef = useRef(true);
+  const autoDiscoveryStartedRef = useRef(false);
 
   const setConnectionStep = useCallback((next: ConnectionStep) => {
     stepRef.current = next;
@@ -286,30 +430,62 @@ function App() {
   const statusTone =
     connectionText === "Mất kết nối" ? "lost" : connectionText === "Đã kết nối" ? "ready" : "neutral";
 
+  const applyPairLaunch = useCallback((url: string) => {
+    const pair = parsePairUrl(url);
+    if (!pair) return false;
+    if (pair.base) {
+      setBaseUrl(pair.base);
+      localStorage.setItem(LAST_ADDRESS_KEY, pair.base);
+    }
+    if (pair.code) setPairCode(pair.code);
+    setConnection(null);
+    setConnectionStep("connect");
+    setConnectionText("Kết nối với máy tính");
+    return true;
+  }, [setConnectionStep]);
+
+  useEffect(() => {
+    applyPairLaunch(window.location.href);
+    if (!Capacitor.isNativePlatform() && isAndroidDevice()) {
+      const pair = parsePairUrl(window.location.href);
+      const key = pair ? `atRemoteDeepLink:${pair.base}:${pair.code}` : "";
+      if (pair?.base && pair.code && sessionStorage.getItem(key) !== "tried") {
+        sessionStorage.setItem(key, "tried");
+        window.setTimeout(() => {
+          window.location.href = pairDeepLink(pair.base, pair.code);
+        }, 300);
+      }
+    }
+
+    if (!Capacitor.isNativePlatform()) return;
+    let removeListener: (() => void) | undefined;
+    void CapacitorApp.getLaunchUrl().then((result) => {
+      if (result?.url) applyPairLaunch(result.url);
+    });
+    void CapacitorApp.addListener("appUrlOpen", (event) => {
+      applyPairLaunch(event.url);
+    }).then((handle) => {
+      removeListener = () => {
+        void handle.remove();
+      };
+    });
+    return () => removeListener?.();
+  }, [applyPairLaunch]);
+
   const enterConnected = useCallback((saved: SavedConnection) => {
     saveConnection(saved);
     setConnection(saved);
     setPairRequestId("");
     setConnectionStep("connected");
     setConnectionText("Đã kết nối");
+    setView("chat");
+    const history = readChatHistory(saved.baseUrl);
     setMessages((current) =>
       current.length
         ? current
-        : [
-            {
-              id: newId(),
-              role: "assistant",
-              text: "Đã kết nối với ATAssistant.",
-              time: timeLabel(),
-              cards: [
-                {
-                  type: "message",
-                  title: "Đã kết nối",
-                  message: "Bạn có thể nhập yêu cầu hoặc dùng các nút nhanh."
-                }
-              ]
-            }
-          ]
+        : history.length
+          ? history
+        : [connectedWelcomeMessage()]
     );
   }, [setConnectionStep]);
 
@@ -348,6 +524,17 @@ function App() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
+  useEffect(() => {
+    if (!connection?.baseUrl || messages.length === 0) return;
+    saveChatHistory(connection.baseUrl, messages);
+  }, [connection?.baseUrl, messages]);
+
+  useEffect(() => {
+    if (!connection?.baseUrl || messages.length > 0) return;
+    const history = readChatHistory(connection.baseUrl);
+    setMessages(history.length ? history : [connectedWelcomeMessage()]);
+  }, [connection?.baseUrl, messages.length]);
+
   const handleConversationScroll = () => {
     const element = listRef.current;
     if (!element) return;
@@ -356,11 +543,14 @@ function App() {
 
   useEffect(() => {
     if (step !== "pending" || !pairRequestId) return;
-    const id = window.setInterval(async () => {
+    let stopped = false;
+    const poll = async () => {
       try {
         const response = await requestJson<Record<string, unknown>>(
-          `${baseUrl}/api/pair/status?requestId=${encodeURIComponent(pairRequestId)}`
+          `${baseUrl}/api/pair/status?requestId=${encodeURIComponent(pairRequestId)}`,
+          { connectTimeout: 2500, readTimeout: 5000 }
         );
+        if (stopped) return;
         const data = response.data;
         if (data.status === "approved" && data.authKey) {
           enterConnected({
@@ -374,10 +564,15 @@ function App() {
           setConnectionText("Mất kết nối");
         }
       } catch {
-        setConnectionText("Mất kết nối");
+        if (!stopped) setConnectionText("Đang chờ xác nhận trên ATAssistant");
       }
-    }, 1400);
-    return () => window.clearInterval(id);
+    };
+    void poll();
+    const id = window.setInterval(poll, 900);
+    return () => {
+      stopped = true;
+      window.clearInterval(id);
+    };
   }, [baseUrl, deviceName, enterConnected, pairRequestId, setConnectionStep, step]);
 
   const submitPair = async (event?: FormEvent) => {
@@ -396,7 +591,9 @@ function App() {
     try {
       const response = await requestJson<Record<string, unknown>>(`${cleanBase}/api/pair/request`, {
         method: "POST",
-        data: { deviceName, pairCode }
+        data: { deviceName, pairCode },
+        connectTimeout: 3500,
+        readTimeout: 7000
       });
       const data = response.data;
       if (!response.ok || !data.ok) throw new Error(String(data.message || friendlyFetchError()));
@@ -424,9 +621,77 @@ function App() {
     clearConnection();
     setConnection(null);
     setShowQuickActions(false);
+    setView("chat");
     setConnectionStep("connect");
     setConnectionText("Kết nối với máy tính");
   };
+
+  const scanForComputers = useCallback(async () => {
+    if (discovering) return;
+    setDiscovering(true);
+    setDiscoveredComputers([]);
+    setConnectionText("Đang tìm máy tính trong WiFi");
+    const found: DiscoveredComputer[] = [];
+    const seen = new Set<string>();
+    const remember = (item: DiscoveredComputer) => {
+      if (seen.has(item.baseUrl)) return;
+      seen.add(item.baseUrl);
+      found.push(item);
+      setDiscoveredComputers([...found]);
+      if (found.length === 1) {
+        setBaseUrl(item.baseUrl);
+        if (item.pairCode) setPairCode(item.pairCode);
+        localStorage.setItem(LAST_ADDRESS_KEY, item.baseUrl);
+      }
+    };
+    const probe = async (candidate: string) => {
+      try {
+        const response = await requestJson<HealthPayload>(`${candidate}/api/health`, {
+          connectTimeout: 650,
+          readTimeout: 900
+        });
+        const data = response.data;
+        if (response.ok && data?.ok && String(data.name || "").toLowerCase().includes("atassistant")) {
+          remember({
+            baseUrl: candidate,
+            name: data.name || "ATAssistant",
+            pairCode: String(data.pairCode || ""),
+            status: data.status || "ready"
+          });
+        }
+      } catch {
+        // Không hiện lỗi từng địa chỉ; người dùng chỉ cần thấy máy nào tìm được.
+      }
+    };
+    try {
+      for (const subnet of discoverySubnets(baseUrl)) {
+        const hosts = Array.from({ length: 254 }, (_, index) => `http://${subnet}.${index + 1}:8765`);
+        let cursor = 0;
+        const workers = Array.from({ length: 28 }, async () => {
+          while (cursor < hosts.length && found.length < 5) {
+            const next = hosts[cursor];
+            cursor += 1;
+            await probe(next);
+          }
+        });
+        await Promise.all(workers);
+        if (found.length > 0) break;
+      }
+      if (found.length === 0) {
+        setConnectionText("Không kết nối được với máy tính");
+      } else {
+        setConnectionText("Đã tìm thấy máy tính");
+      }
+    } finally {
+      setDiscovering(false);
+    }
+  }, [baseUrl, discovering]);
+
+  useEffect(() => {
+    if (step !== "connect" || connection || autoDiscoveryStartedRef.current) return;
+    autoDiscoveryStartedRef.current = true;
+    void scanForComputers();
+  }, [connection, scanForComputers, step]);
 
   const appendAssistantError = (text: string) => {
     setMessages((current) => [
@@ -513,12 +778,90 @@ function App() {
     [remoteFileUrl]
   );
 
+  const loadUploads = useCallback(async () => {
+    if (!connection) return;
+    setUploadsBusy(true);
+    setUploadsMessage("");
+    try {
+      const response = await requestJson<{ ok: boolean; files: RemoteFile[]; message?: string }>(
+        `${connection.baseUrl}/api/uploads`,
+        { headers: { "X-AT-Remote-Key": connection.authKey } }
+      );
+      if (!response.ok || !response.data.ok) throw new Error(response.data.message || friendlyFetchError());
+      setUploads(response.data.files || []);
+      setUploadsMessage((response.data.files || []).length ? "" : "Chưa có tệp nào được gửi từ điện thoại.");
+    } catch (error) {
+      setUploadsMessage(friendlyConnectionError(error));
+    } finally {
+      setUploadsBusy(false);
+    }
+  }, [connection]);
+
+  const deleteUpload = useCallback(async (file: RemoteFile) => {
+    if (!connection) return;
+    setUploadsBusy(true);
+    try {
+      const response = await requestJson<{ ok: boolean; message?: string }>(`${connection.baseUrl}/api/uploads/delete`, {
+        method: "POST",
+        headers: { "X-AT-Remote-Key": connection.authKey },
+        data: { name: file.storageName || file.name }
+      });
+      if (!response.ok || !response.data.ok) throw new Error(response.data.message || "Chưa xóa được tệp.");
+      setUploadsMessage("Đã xóa tệp.");
+      await loadUploads();
+    } catch (error) {
+      setUploadsMessage(friendlyConnectionError(error));
+    } finally {
+      setUploadsBusy(false);
+    }
+  }, [connection, loadUploads]);
+
+  const openUploadFolder = useCallback(async () => {
+    if (!connection) return;
+    setUploadsBusy(true);
+    try {
+      const response = await requestJson<{ ok: boolean; message?: string }>(
+        `${connection.baseUrl}/api/uploads/open-folder`,
+        { method: "POST", headers: { "X-AT-Remote-Key": connection.authKey } }
+      );
+      if (!response.ok || !response.data.ok) throw new Error(response.data.message || "Chưa mở được thư mục.");
+      setUploadsMessage(response.data.message || "Đã mở thư mục trên máy tính.");
+    } catch (error) {
+      setUploadsMessage(friendlyConnectionError(error));
+    } finally {
+      setUploadsBusy(false);
+    }
+  }, [connection]);
+
+  const loadPermissions = useCallback(async () => {
+    if (!connection) return;
+    setPermissionsBusy(true);
+    try {
+      const response = await requestJson<{ ok: boolean; groups: PermissionGroup[]; message?: string }>(
+        `${connection.baseUrl}/api/permissions`,
+        { headers: { "X-AT-Remote-Key": connection.authKey } }
+      );
+      if (!response.ok || !response.data.ok) throw new Error(response.data.message || friendlyFetchError());
+      setPermissions(response.data.groups || []);
+    } catch {
+      setPermissions([]);
+    } finally {
+      setPermissionsBusy(false);
+    }
+  }, [connection]);
+
+  useEffect(() => {
+    if (view === "files") void loadUploads();
+    if (view === "permissions") void loadPermissions();
+  }, [loadPermissions, loadUploads, view]);
+
   const uploadFile = async (file: File, command: string) => {
     if (!connection) {
       setConnectionStep("connect");
       return;
     }
     stickToBottomRef.current = true;
+    setView("chat");
     const pendingId = newId();
     setBusy(true);
     setDraft("");
@@ -563,6 +906,7 @@ function App() {
         buttons: data.buttons,
         status: data.status
       });
+      if (view === "files") void loadUploads();
       setConnectionText("Đã kết nối");
     } catch (error) {
       const text = friendlyConnectionError(error);
@@ -591,6 +935,7 @@ function App() {
       return;
     }
     stickToBottomRef.current = true;
+    setView("chat");
     const pendingId = newId();
     setLastCommand(clean);
     setDraft("");
@@ -644,13 +989,27 @@ function App() {
       { label: "Tạo QR", icon: QrCode, prefix: "tạo qr ", suffix: " trong mmo" },
       { label: "Tạo mật khẩu", icon: KeyRound, command: "tạo mật khẩu trong mmo" },
       { label: "Hash text", icon: Hash, prefix: "hash sha256 ", suffix: " trong mmo" },
-      { label: "Trạng thái máy", icon: Cpu, command: "trạng thái máy" }
+      { label: "Trạng thái máy", icon: Cpu, command: "trạng thái máy" },
+      { label: "Tệp đã gửi", icon: FolderOpen, view: "files" },
+      { label: "Quyền điều khiển", icon: Shield, view: "permissions" },
+      { label: "Xóa lịch sử", icon: History, action: "clear-history" }
     ],
     []
   );
 
   const runQuickAction = (action: QuickAction) => {
     setShowQuickActions(false);
+    if (action.view) {
+      setView(action.view);
+      return;
+    }
+    if (action.action === "clear-history" && connection) {
+      clearChatHistory(connection.baseUrl);
+      setMessages([]);
+      setView("chat");
+      return;
+    }
+    setView("chat");
     if ("command" in action && action.command) {
       void sendCommand(action.command);
       return;
@@ -665,6 +1024,8 @@ function App() {
       window.setTimeout(() => inputRef.current?.focus(), 30);
     }
   };
+
+  const viewTitle = view === "files" ? "Tệp đã gửi" : view === "permissions" ? "Quyền điều khiển" : "Kết quả";
 
   if (step !== "connected") {
     return (
@@ -686,7 +1047,7 @@ function App() {
               <span>{connectionText}</span>
             </div>
           </div>
-          <p className="lead">Nhập đúng địa chỉ và mã đang hiển thị trong ATAssistant trên máy tính.</p>
+          <p className="lead">AT Remote sẽ tự tìm máy tính đang bật ATAssistant trong cùng WiFi. Nếu chưa thấy, bạn vẫn có thể nhập địa chỉ dưới mã kết nối trên máy tính.</p>
 
           {step === "pending" ? (
             <div className="waiting-panel">
@@ -699,6 +1060,33 @@ function App() {
             </div>
           ) : (
             <form className="connect-form" onSubmit={submitPair}>
+              <button type="button" className="scan-button" onClick={scanForComputers} disabled={discovering}>
+                {discovering ? <RefreshCw className="spin" size={18} /> : <Search size={18} />}
+                {discovering ? "Đang tìm máy tính" : "Tìm máy tính trong WiFi"}
+              </button>
+              {discoveredComputers.length > 0 ? (
+                <div className="computer-list">
+                  {discoveredComputers.map((computer) => (
+                    <button
+                      type="button"
+                      key={computer.baseUrl}
+                      className={normalizeBaseUrl(baseUrl) === computer.baseUrl ? "selected" : ""}
+                      onClick={() => {
+                        setBaseUrl(computer.baseUrl);
+                        if (computer.pairCode) setPairCode(computer.pairCode);
+                        localStorage.setItem(LAST_ADDRESS_KEY, computer.baseUrl);
+                      }}
+                    >
+                      <Laptop size={18} />
+                      <span>
+                        <strong>{computer.name}</strong>
+                        <small>{computer.baseUrl}</small>
+                      </span>
+                      {normalizeBaseUrl(baseUrl) === computer.baseUrl ? <Check size={18} /> : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <label>
                 Tên điện thoại
                 <input value={deviceName} onChange={(event) => setDeviceName(event.target.value)} />
@@ -749,7 +1137,7 @@ function App() {
           </div>
           <div>
             <p className="eyebrow">AT Remote</p>
-            <h1>Kết quả</h1>
+            <h1>{viewTitle}</h1>
           </div>
         </div>
         <button className={`connection-badge ${statusTone}`} onClick={checkHealth}>
@@ -758,8 +1146,27 @@ function App() {
         </button>
       </header>
 
-      <section className="conversation" ref={listRef} onScroll={handleConversationScroll}>
-        {messages.length === 0 ? (
+      <section className={`conversation ${view !== "chat" ? "panel-view" : ""}`} ref={listRef} onScroll={handleConversationScroll}>
+        {view === "files" ? (
+          <FilesView
+            files={uploads}
+            busy={uploadsBusy}
+            message={uploadsMessage}
+            onRefresh={loadUploads}
+            onOpenFolder={openUploadFolder}
+            onOpenFile={openRemoteFile}
+            onDownloadFile={downloadRemoteFile}
+            onShareFile={shareRemoteFile}
+            onDeleteFile={deleteUpload}
+          />
+        ) : view === "permissions" ? (
+          <PermissionsView
+            groups={permissions}
+            busy={permissionsBusy}
+            onRefresh={loadPermissions}
+            onDisconnect={disconnect}
+          />
+        ) : messages.length === 0 ? (
           <div className="empty-state">
             <MonitorSmartphone size={42} />
             <h2>Nhập yêu cầu</h2>
@@ -818,10 +1225,6 @@ function App() {
               </button>
             );
           })}
-          <button className="change-computer-action" type="button" onClick={disconnect}>
-            <MonitorSmartphone size={18} />
-            <span>Đổi máy tính</span>
-          </button>
         </section>
       ) : null}
 
@@ -878,6 +1281,127 @@ function App() {
         />
       ) : null}
     </main>
+  );
+}
+
+function FilesView({
+  files,
+  busy,
+  message,
+  onRefresh,
+  onOpenFolder,
+  onOpenFile,
+  onDownloadFile,
+  onShareFile,
+  onDeleteFile
+}: {
+  files: RemoteFile[];
+  busy: boolean;
+  message: string;
+  onRefresh: () => void;
+  onOpenFolder: () => void;
+  onOpenFile: (file: RemoteFile) => void;
+  onDownloadFile: (file: RemoteFile) => void;
+  onShareFile: (file: RemoteFile) => void;
+  onDeleteFile: (file: RemoteFile) => void;
+}) {
+  return (
+    <div className="library-panel">
+      <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onRefresh} disabled={busy}>
+          <RefreshCw className={busy ? "spin" : ""} size={16} />
+          Làm mới
+        </button>
+        <button type="button" className="secondary-button" onClick={onOpenFolder} disabled={busy}>
+          <FolderOpen size={16} />
+          Mở thư mục
+        </button>
+      </div>
+      {message ? <p className="panel-message">{message}</p> : null}
+      {files.length === 0 ? (
+        <div className="empty-state compact">
+          <FileText size={36} />
+          <h2>Chưa có tệp</h2>
+          <p>Tệp gửi từ điện thoại lên máy tính sẽ nằm ở đây.</p>
+        </div>
+      ) : (
+        <div className="file-list">
+          {files.map((file) => (
+            <article className="file-row" key={`${file.storageName || file.name}-${file.savedAt || file.id}`}>
+              <div className="file-summary">
+                <strong>{file.name}</strong>
+                <span>{file.sizeLabel || `${file.size || 0} B`}</span>
+              </div>
+              <div className="file-actions four">
+                <button type="button" className="secondary-button" onClick={() => onOpenFile(file)}>
+                  <FileText size={16} />
+                  Mở
+                </button>
+                <button type="button" className="secondary-button" onClick={() => onDownloadFile(file)}>
+                  <Download size={16} />
+                  Tải về
+                </button>
+                <button type="button" className="secondary-button" onClick={() => onShareFile(file)}>
+                  <Share2 size={16} />
+                  Chia sẻ
+                </button>
+                <button type="button" className="danger-soft-button" onClick={() => onDeleteFile(file)}>
+                  <Trash2 size={16} />
+                  Xóa
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PermissionsView({
+  groups,
+  busy,
+  onRefresh,
+  onDisconnect
+}: {
+  groups: PermissionGroup[];
+  busy: boolean;
+  onRefresh: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <div className="permission-panel">
+      <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onRefresh} disabled={busy}>
+          <RefreshCw className={busy ? "spin" : ""} size={16} />
+          Làm mới
+        </button>
+        <button type="button" className="secondary-button" onClick={onDisconnect}>
+          <MonitorSmartphone size={16} />
+          Kết nối máy khác
+        </button>
+      </div>
+      <p className="panel-message">Quyền được bật hoặc tắt trong cửa sổ Kết nối điện thoại trên ATAssistant.</p>
+      <div className="permission-list">
+        {groups.length === 0 ? (
+          <div className="empty-state compact">
+            <Shield size={36} />
+            <h2>Chưa đọc được quyền</h2>
+            <p>Hãy thử làm mới khi điện thoại và máy tính cùng WiFi.</p>
+          </div>
+        ) : (
+          groups.map((group) => (
+            <article className={`permission-row ${group.enabled ? "enabled" : "disabled"}`} key={group.key}>
+              <div>
+                <h3>{group.label}</h3>
+                <p>{group.description}</p>
+              </div>
+              <span>{group.enabled ? "Đang bật" : "Đang tắt"}</span>
+            </article>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

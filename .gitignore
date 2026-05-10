@@ -37,6 +37,9 @@ credentials.json
 credentials_gmail.json
 credentials_drive.json
 token.json
+apps/at-remote/android/signing.properties
+apps/at-remote/android/*.jks
+apps/at-remote/android/*.keystore
 
 # Logs
 *.log

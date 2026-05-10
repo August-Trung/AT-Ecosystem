@@ -12,6 +12,7 @@ import secrets
 import socket
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -62,6 +63,32 @@ DEFAULT_MOBILE_REMOTE_SETTINGS: dict[str, Any] = {
     "paired_devices": [],
 }
 
+PERMISSION_GROUPS: dict[str, dict[str, str]] = {
+    "file": {
+        "label": "Tệp",
+        "description": "Gửi, nhận, mở và xóa tệp giữa điện thoại với máy tính.",
+    },
+    "app_control": {
+        "label": "Điều khiển ứng dụng",
+        "description": "Mở, đóng hoặc chuyển ứng dụng trên máy tính.",
+    },
+    "system_power": {
+        "label": "Nguồn máy",
+        "description": "Tắt máy, khởi động lại, khóa máy hoặc cho máy ngủ.",
+    },
+    "browser_control": {
+        "label": "Trình duyệt",
+        "description": "Mở trang web, điều khiển tab và thao tác trong trình duyệt.",
+    },
+}
+
+DEFAULT_DEVICE_PERMISSIONS: dict[str, bool] = {
+    "file": True,
+    "app_control": True,
+    "system_power": False,
+    "browser_control": True,
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -87,7 +114,29 @@ def _public_device(device: dict[str, Any]) -> dict[str, Any]:
         "name": str(device.get("name") or ""),
         "approvedAt": str(device.get("approved_at") or ""),
         "lastSeen": str(device.get("last_seen") or ""),
+        "permissions": _normalize_permissions(device.get("permissions")),
     }
+
+
+def _normalize_permissions(value: Any) -> dict[str, bool]:
+    permissions = dict(DEFAULT_DEVICE_PERMISSIONS)
+    if isinstance(value, dict):
+        for key in permissions:
+            permissions[key] = bool(value.get(key, permissions[key]))
+    return permissions
+
+
+def permission_groups_public(permissions: dict[str, bool] | None = None) -> list[dict[str, Any]]:
+    enabled = _normalize_permissions(permissions or DEFAULT_DEVICE_PERMISSIONS)
+    return [
+        {
+            "key": key,
+            "label": meta["label"],
+            "description": meta["description"],
+            "enabled": bool(enabled.get(key, False)),
+        }
+        for key, meta in PERMISSION_GROUPS.items()
+    ]
 
 
 def _pair_identity(device_name: str, client_host: str) -> tuple[str, str]:
@@ -115,6 +164,103 @@ def _format_bytes(size: int) -> str:
             return f"{value:.0f} {unit}" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{size} B"
+
+
+def _fold_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFD", str(value or "").casefold())
+    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+
+
+def _permission_enabled(device: dict[str, Any], group: str) -> bool:
+    permissions = _normalize_permissions(device.get("permissions"))
+    return bool(permissions.get(group, False))
+
+
+def _permission_group_for_command(command: str) -> str:
+    text = _fold_text(command)
+    checks: list[tuple[str, tuple[str, ...]]] = [
+        (
+            "system_power",
+            (
+                "tat may",
+                "shutdown",
+                "khoi dong lai",
+                "restart",
+                "sleep",
+                "hibernate",
+                "ngu may",
+                "khoa may",
+                "lock computer",
+                "dang xuat",
+                "log off",
+                "log out",
+            ),
+        ),
+        (
+            "file",
+            (
+                "xoa file",
+                "xoa tep",
+                "delete file",
+                "mo file",
+                "tim file",
+                "gui file",
+                "tai file",
+                "download file",
+                "thu muc",
+                "folder",
+                "desktop file",
+            ),
+        ),
+        (
+            "browser_control",
+            (
+                "http://",
+                "https://",
+                "youtube",
+                "facebook",
+                "trang web",
+                "website",
+                "browser",
+                "chrome",
+                "edge",
+                "tab",
+                "reload",
+                "google",
+                "tim tren web",
+            ),
+        ),
+        (
+            "app_control",
+            (
+                "mo app",
+                "mo ung dung",
+                "dong app",
+                "tat app",
+                "close app",
+                "kill app",
+                "task manager",
+                "notepad",
+                "vscode",
+                "word",
+                "excel",
+            ),
+        ),
+    ]
+    for group, terms in checks:
+        if any(term in text for term in terms):
+            return group
+    return ""
+
+
+def _permission_denied_payload(group: str) -> dict[str, Any]:
+    label = PERMISSION_GROUPS.get(group, {}).get("label") or "quyền này"
+    return mobile_payload_from_result(
+        ActionResult.err(
+            f"Điện thoại này chưa được cho phép dùng nhóm quyền {label}. Hãy mở Kết nối điện thoại trên ATAssistant để bật quyền.",
+            code=ErrorCode.NOT_ALLOWED,
+        )
+    )
 
 
 def _normalize_bind_host(host: str) -> str:
@@ -223,6 +369,7 @@ class MobileRemoteSettingsStore:
                     "key_hash": key_hash,
                     "approved_at": str(raw.get("approved_at") or ""),
                     "last_seen": str(raw.get("last_seen") or ""),
+                    "permissions": _normalize_permissions(raw.get("permissions")),
                 }
             )
         data["paired_devices"] = devices
@@ -372,6 +519,12 @@ class MobileRemoteBridge:
     def pairing_urls(self) -> list[str]:
         return [f"{url}/?code={self._pair_code}" for url in self.urls()]
 
+    def deep_link_urls(self) -> list[str]:
+        return [
+            f"atremote://pair?base={quote(url, safe='')}&code={quote(self._pair_code)}"
+            for url in self.urls()
+        ]
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             self._cleanup_pending_locked()
@@ -382,9 +535,11 @@ class MobileRemoteBridge:
                 "pairCode": self._pair_code,
                 "urls": self.urls(),
                 "pairingUrls": self.pairing_urls(),
+                "deepLinkUrls": self.deep_link_urls(),
                 "devices": [_public_device(item) for item in self._settings.get("paired_devices") or []],
                 "pending": [item.to_public() for item in self._pending.values() if item.status == "pending"],
                 "staticAppReady": _at_remote_dist_dir() is not None,
+                "permissionGroups": permission_groups_public(),
             }
 
     def request_pair(self, device_name: str, pair_code: str, client_host: str = "") -> dict[str, Any]:
@@ -447,6 +602,7 @@ class MobileRemoteBridge:
                 "key_hash": _token_hash(auth_key),
                 "approved_at": _now_iso(),
                 "last_seen": "",
+                "permissions": dict(DEFAULT_DEVICE_PERMISSIONS),
             }
             self._settings = self.settings_store.load()
             devices = list(self._settings.get("paired_devices") or [])
@@ -498,6 +654,37 @@ class MobileRemoteBridge:
         self._emit("device_revoked", {"deviceId": device_id})
         return True
 
+    def update_device_permissions(self, device_id: str, permissions: dict[str, Any]) -> dict[str, Any]:
+        clean_permissions = _normalize_permissions(permissions)
+        with self._lock:
+            self._settings = self.settings_store.load()
+            devices = list(self._settings.get("paired_devices") or [])
+            updated: dict[str, Any] | None = None
+            for item in devices:
+                if str(item.get("id") or "") != str(device_id or ""):
+                    continue
+                item["permissions"] = clean_permissions
+                updated = item
+                break
+            if updated is None:
+                return {"ok": False, "message": "Không tìm thấy thiết bị."}
+            self._settings["paired_devices"] = devices
+            self.settings_store.save(self._settings)
+            public = _public_device(updated)
+        self._emit("device_permissions_changed", {"device": public})
+        return {"ok": True, "device": public}
+
+    def device_permissions(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        public = _public_device(device)
+        return {
+            "ok": True,
+            "device": public,
+            "groups": permission_groups_public(public.get("permissions") or {}),
+        }
+
     def handle_command(self, auth_key: str, command: str) -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
@@ -514,6 +701,9 @@ class MobileRemoteBridge:
             return mobile_payload_from_result(ActionResult.err("Bạn chưa nhập yêu cầu.", code=ErrorCode.UNKNOWN))
         if len(text) > MAX_COMMAND_LENGTH:
             return mobile_payload_from_result(ActionResult.err("Yêu cầu quá dài.", code=ErrorCode.UNKNOWN))
+        required_permission = _permission_group_for_command(text)
+        if required_permission and not _permission_enabled(device, required_permission):
+            return _permission_denied_payload(required_permission)
 
         public_device = _public_device(device)
         self._emit(
@@ -558,6 +748,8 @@ class MobileRemoteBridge:
                 "cards": [{"type": "error", "title": "Mất kết nối", "message": "Hãy kết nối lại với ATAssistant."}],
                 "buttons": [{"label": "Thử lại", "command": "__retry__"}],
             }
+        if not _permission_enabled(device, "file"):
+            return _permission_denied_payload("file")
 
         name = _safe_upload_filename(str(payload.get("name") or "mobile_file"))
         mime = str(payload.get("mime") or mimetypes.guess_type(name)[0] or "application/octet-stream").strip()
@@ -585,7 +777,7 @@ class MobileRemoteBridge:
             )
 
         public_device = _public_device(device)
-        target_dir = ensure_app_data_dir("mobile_uploads") / (public_device.get("id") or "device")
+        target_dir = self._upload_dir_for_device(public_device)
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / name
         if target.exists():
@@ -680,6 +872,79 @@ class MobileRemoteBridge:
         if command:
             self._emit("command", event_payload)
         return response
+
+    def list_uploads(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính.", "files": []}
+        if not _permission_enabled(device, "file"):
+            return {**_permission_denied_payload("file"), "files": []}
+        public_device = _public_device(device)
+        folder = self._upload_dir_for_device(public_device)
+        folder.mkdir(parents=True, exist_ok=True)
+        files: list[dict[str, Any]] = []
+        for path in sorted(folder.iterdir(), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True):
+            if not path.is_file():
+                continue
+            public_file = self._register_file(path, public_device, kind="upload")
+            if not public_file:
+                continue
+            try:
+                public_file["savedAt"] = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+            except Exception:
+                public_file["savedAt"] = ""
+            public_file["storageName"] = path.name
+            files.append(public_file)
+        return {"ok": True, "status": "ok", "files": files}
+
+    def delete_upload(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "file"):
+            return _permission_denied_payload("file")
+        public_device = _public_device(device)
+        folder = self._upload_dir_for_device(public_device)
+        name = _safe_upload_filename(str(payload.get("name") or payload.get("storageName") or ""))
+        target = (folder / name).resolve()
+        try:
+            target.relative_to(folder.resolve())
+        except Exception:
+            return {"ok": False, "message": "Không tìm thấy tệp cần xóa."}
+        if not target.exists() or not target.is_file():
+            return {"ok": False, "message": "Tệp không còn tồn tại trên máy tính."}
+        try:
+            target.unlink()
+        except Exception as exc:
+            return {"ok": False, "message": f"Chưa xóa được tệp: {exc}"}
+        with self._lock:
+            for file_id, record in list(self._files.items()):
+                if Path(record.path).resolve() == target:
+                    self._files.pop(file_id, None)
+        return {"ok": True, "message": "Đã xóa tệp."}
+
+    def open_uploads_folder(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "file"):
+            return _permission_denied_payload("file")
+        folder = self._upload_dir_for_device(_public_device(device))
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except Exception:
+            try:
+                import webbrowser
+
+                webbrowser.open(folder.as_uri())
+            except Exception as exc:
+                return {"ok": False, "message": f"Chưa mở được thư mục: {exc}"}
+        return {"ok": True, "message": "Đã mở thư mục trên máy tính."}
+
+    @staticmethod
+    def _upload_dir_for_device(device: dict[str, Any]) -> Path:
+        return ensure_app_data_dir("mobile_uploads") / (str(device.get("id") or "device"))
 
     def _register_file(self, path: str | Path, device: dict[str, Any], *, kind: str = "file") -> dict[str, Any] | None:
         try:
@@ -786,13 +1051,16 @@ class MobileRemoteBridge:
                     query = parse_qs(parsed.query)
                     self._send_json(bridge.pair_status((query.get("requestId") or [""])[0]))
                     return
+                if parsed.path == "/api/uploads":
+                    self._send_json(bridge.list_uploads(self._auth_key()))
+                    return
+                if parsed.path == "/api/permissions":
+                    self._send_json(bridge.device_permissions(self._auth_key()))
+                    return
                 if parsed.path.startswith("/api/files/"):
                     query = parse_qs(parsed.query)
                     file_id = unquote(parsed.path.removeprefix("/api/files/")).strip("/")
-                    auth_key = self.headers.get("X-AT-Remote-Key") or ""
-                    auth_header = self.headers.get("Authorization") or ""
-                    if auth_header.lower().startswith("bearer "):
-                        auth_key = auth_header[7:].strip()
+                    auth_key = self._auth_key()
                     token = (query.get("token") or [""])[0]
                     record = bridge._get_registered_file(file_id, auth_key=auth_key, token=token)
                     if not record:
@@ -819,21 +1087,27 @@ class MobileRemoteBridge:
                     return
                 if parsed.path == "/api/command":
                     body = self._read_json()
-                    auth_key = self.headers.get("X-AT-Remote-Key") or ""
-                    auth_header = self.headers.get("Authorization") or ""
-                    if auth_header.lower().startswith("bearer "):
-                        auth_key = auth_header[7:].strip()
-                    self._send_json(bridge.handle_command(auth_key, str(body.get("command") or "")))
+                    self._send_json(bridge.handle_command(self._auth_key(), str(body.get("command") or "")))
                     return
                 if parsed.path == "/api/upload":
                     body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
-                    auth_key = self.headers.get("X-AT-Remote-Key") or ""
-                    auth_header = self.headers.get("Authorization") or ""
-                    if auth_header.lower().startswith("bearer "):
-                        auth_key = auth_header[7:].strip()
-                    self._send_json(bridge.handle_upload(auth_key, body))
+                    self._send_json(bridge.handle_upload(self._auth_key(), body))
+                    return
+                if parsed.path == "/api/uploads/delete":
+                    body = self._read_json()
+                    self._send_json(bridge.delete_upload(self._auth_key(), body))
+                    return
+                if parsed.path == "/api/uploads/open-folder":
+                    self._send_json(bridge.open_uploads_folder(self._auth_key()))
                     return
                 self._send_json({"ok": False, "message": "Not found"}, status=HTTPStatus.NOT_FOUND)
+
+            def _auth_key(self) -> str:
+                auth_key = self.headers.get("X-AT-Remote-Key") or ""
+                auth_header = self.headers.get("Authorization") or ""
+                if auth_header.lower().startswith("bearer "):
+                    auth_key = auth_header[7:].strip()
+                return auth_key
 
             def _read_json(self, *, max_bytes: int = 1024 * 1024) -> dict[str, Any]:
                 try:

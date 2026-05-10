@@ -9,7 +9,12 @@ import customtkinter as ctk
 
 from src.core.app_paths import ensure_app_data_dir
 from src.gui.theme import FONT_FAMILY, FONT_SIZE_NORMAL, FONT_SIZE_SMALL, FONT_SIZE_TITLE
-from src.integrations.mobile_remote import DEFAULT_REMOTE_PORT, MobileRemoteBridge, MobileRemoteSettingsStore
+from src.integrations.mobile_remote import (
+    DEFAULT_REMOTE_PORT,
+    PERMISSION_GROUPS,
+    MobileRemoteBridge,
+    MobileRemoteSettingsStore,
+)
 
 
 REMOTE_PALETTE = {
@@ -54,6 +59,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self._last_qr_url = ""
         self._last_pending_signature = ""
         self._last_devices_signature = ""
+        self._permission_vars: list[ctk.BooleanVar] = []
 
         settings = self._store.load()
         ui = self._palette
@@ -316,19 +322,29 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             self._notify("Đã xóa thiết bị khỏi danh sách kết nối.", "normal")
         self._refresh()
 
+    def _set_permission(self, device_id: str, permissions: dict, key: str, enabled: bool) -> None:
+        next_permissions = {**permissions, key: bool(enabled)}
+        result = self._bridge.update_device_permissions(device_id, next_permissions)
+        if result.get("ok"):
+            self._notify("Đã cập nhật quyền điều khiển.", "success")
+        else:
+            self._notify(str(result.get("message") or "Chưa cập nhật được quyền."), "error")
+        self._refresh()
+
     def _refresh(self) -> None:
         snapshot = self._bridge.snapshot()
         running = bool(snapshot.get("running"))
         self.enabled_var.set(running)
         self.code_var.set(str(snapshot.get("pairCode") or "------") if running else "------")
         urls = list(snapshot.get("pairingUrls") or snapshot.get("urls") or [])
+        deep_links = list(snapshot.get("deepLinkUrls") or [])
         self.url_var.set(str(urls[0]) if urls else "Chưa có địa chỉ. Hãy bật kết nối điện thoại.")
         if running:
             ready = "AT Remote đã sẵn sàng." if snapshot.get("staticAppReady") else "Dùng app Android và nhập địa chỉ bên dưới."
             self.status_var.set(f"{ready} Điện thoại và máy tính cần cùng WiFi.")
         else:
             self.status_var.set("Đang tắt. Bật kết nối điện thoại để ghép nối thiết bị.")
-        qr_url = str(urls[0] if urls else "")
+        qr_url = str((deep_links or urls or [""])[0])
         if qr_url != self._last_qr_url:
             self._last_qr_url = qr_url
             self._render_qr(qr_url)
@@ -358,6 +374,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
                     "id": item.get("id"),
                     "name": item.get("name"),
                     "approvedAt": item.get("approvedAt"),
+                    "permissions": item.get("permissions"),
                 }
                 for item in devices
             ],
@@ -441,6 +458,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
 
     def _render_devices(self, items: list[dict]) -> None:
         ui = self._palette
+        self._permission_vars = []
         for child in self.devices_frame.winfo_children():
             child.destroy()
         ctk.CTkLabel(
@@ -472,6 +490,27 @@ class MobileRemoteDialog(ctk.CTkToplevel):
                 wraplength=330,
             ).pack(fill="x", padx=10, pady=(10, 7))
             device_id = str(item.get("id") or "")
+            permissions = dict(item.get("permissions") or {})
+            permission_box = ctk.CTkFrame(row, fg_color="transparent")
+            permission_box.pack(fill="x", padx=10, pady=(0, 8))
+            for key, meta in PERMISSION_GROUPS.items():
+                var = ctk.BooleanVar(value=bool(permissions.get(key, False)))
+                self._permission_vars.append(var)
+                ctk.CTkSwitch(
+                    permission_box,
+                    text=meta.get("label") or key,
+                    variable=var,
+                    command=lambda did=device_id, perms=permissions, group=key, value=var: self._set_permission(
+                        did,
+                        perms,
+                        group,
+                        bool(value.get()),
+                    ),
+                    font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"),
+                    text_color=ui["FG_PRIMARY"],
+                    progress_color=ui["ACCENT"],
+                    button_color="#ffffff",
+                ).pack(anchor="w", pady=2)
             ctk.CTkButton(
                 row,
                 text="Xóa thiết bị",
