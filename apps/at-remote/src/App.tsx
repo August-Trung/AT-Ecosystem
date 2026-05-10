@@ -298,6 +298,9 @@ function App() {
   }, []);
 
   const checkHealth = useCallback(async () => {
+    if (step === "pending") {
+      return;
+    }
     if (!activeBaseUrl.trim()) {
       setConnectionText(connection ? "Mất kết nối" : "Kết nối với máy tính");
       setStep(connection ? "connected" : "connect");
@@ -313,7 +316,7 @@ function App() {
       if (connection) setStep("connected");
       else setStep("connect");
     }
-  }, [activeBaseUrl, connection]);
+  }, [activeBaseUrl, connection, step]);
 
   useEffect(() => {
     checkHealth();
