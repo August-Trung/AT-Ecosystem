@@ -106,6 +106,13 @@ def _format_bytes(size: int) -> str:
     return f"{size} B"
 
 
+def _normalize_bind_host(host: str) -> str:
+    value = str(host or "").strip().lower()
+    if not value or value in {"localhost", "::1"} or value.startswith("127."):
+        return DEFAULT_REMOTE_HOST
+    return str(host or "").strip()
+
+
 def _monorepo_root() -> Path | None:
     current = Path(__file__).resolve()
     for parent in current.parents:
@@ -182,8 +189,7 @@ class MobileRemoteSettingsStore:
     def _normalize(self, settings: dict[str, Any]) -> dict[str, Any]:
         data = dict(settings)
         data["enabled"] = bool(data.get("enabled", False))
-        host = str(data.get("host") or DEFAULT_REMOTE_HOST).strip()
-        data["host"] = host or DEFAULT_REMOTE_HOST
+        data["host"] = _normalize_bind_host(str(data.get("host") or DEFAULT_REMOTE_HOST))
         try:
             port = int(data.get("port") or DEFAULT_REMOTE_PORT)
         except (TypeError, ValueError):

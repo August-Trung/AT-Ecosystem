@@ -111,6 +111,14 @@ def test_mobile_remote_deduplicates_pair_requests(tmp_path, monkeypatch):
         bridge.stop()
 
 
+def test_mobile_remote_settings_never_bind_loopback_for_lan(tmp_path, monkeypatch):
+    store = _store(tmp_path, monkeypatch)
+    saved = store.save({"enabled": True, "host": "127.0.0.1", "port": 8765, "paired_devices": []})
+
+    assert saved["host"] == "0.0.0.0"
+    assert store.load()["host"] == "0.0.0.0"
+
+
 def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path, monkeypatch):
     engine = _FakeEngine()
     events: list[tuple[str, dict]] = []
