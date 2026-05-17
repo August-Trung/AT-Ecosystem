@@ -4,4 +4,14 @@
     <string name="title_activity_main">AT Remote</string>
     <string name="package_name">com.augusttrung.atremote</string>
     <string name="custom_url_scheme">atremote</string>
+    <string name="widget_title">AT Remote nhanh</string>
+    <string name="widget_description">G&#7917;i l&#7879;nh nhanh t&#7899;i AT Remote.</string>
+    <string name="widget_command_sleep">T&#7855;t m&#225;y sau 30 ph&#250;t</string>
+    <string name="widget_command_screenshot">Ch&#7909;p m&#224;n h&#236;nh</string>
+    <string name="widget_command_status">Tr&#7841;ng th&#225;i m&#225;y</string>
+    <string name="widget_config_title">C&#7845;u h&#236;nh widget</string>
+    <string name="widget_config_subtitle">&#272;&#7863;t t&#234;n v&#224; c&#226;u l&#7879;nh cho 3 n&#250;t ngo&#224;i m&#224;n h&#236;nh ch&#237;nh.</string>
+    <string name="widget_label_hint">T&#234;n n&#250;t</string>
+    <string name="widget_command_hint">C&#226;u l&#7879;nh g&#7917;i t&#7899;i AT Remote</string>
+    <string name="widget_config_save">L&#432;u widget</string>
 </resources>

@@ -109,6 +109,28 @@ Release APK nằm ở:
 apps/at-remote/android/app/build/outputs/apk/release/app-release.apk
 ```
 
+## Release/update flow
+
+Bump version cho APK:
+
+```powershell
+cd "D:\Study\Projects\AT Ecosystem\apps\at-remote"
+npm run version:android -- --version 1.0.1 --code 2
+```
+
+Build release và copy APK ra thư mục `releases/` kèm metadata `latest.json`:
+
+```powershell
+npm run android:release:flow
+```
+
+Output:
+
+```text
+apps/at-remote/releases/AT-Remote-v<version>-<code>-<timestamp>.apk
+apps/at-remote/releases/latest.json
+```
+
 ## Tệp Và Quyền
 
 Tệp gửi từ điện thoại lên desktop được lưu theo từng thiết bị trong thư mục dữ liệu ATAssistant:

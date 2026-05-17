@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from src.core.app_paths import ensure_app_data_dir
 from src.core.engine import Engine
+from src.core import executor
 from src.core.result import ActionResult, ActionStatus, ErrorCode
 
 try:
@@ -62,6 +63,8 @@ DANGEROUS_UPLOAD_EXTENSIONS = {
     ".wsf",
 }
 
+URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
 
 DEFAULT_MOBILE_REMOTE_SETTINGS: dict[str, Any] = {
     "enabled": False,
@@ -95,6 +98,65 @@ DEFAULT_DEVICE_PERMISSIONS: dict[str, bool] = {
     "system_power": False,
     "browser_control": True,
 }
+
+MOBILE_REMOTE_HELP_TEXT = """AT Remote - lệnh nhanh trên điện thoại
+
+Không cần gõ /at trong app này. Chỉ cần nhập thẳng yêu cầu.
+
+Thường dùng
+- trạng thái máy
+- máy đang chạy gì
+- cửa sổ đang mở
+- mở chrome
+- đóng app nặng
+- đóng tất cả trừ chrome và vscode
+- chụp màn hình
+
+Nhập liệu / trình duyệt
+- nhập text Xin chào
+- gửi text Xin chào
+- chọn ô comment TikTok
+- nhắn Chào mọi người
+- tải lại trang
+- mở tab mới
+- đóng tab hiện tại
+- tab kế tiếp
+- quay lại trang
+
+Phím / chuột
+- click giữa màn hình
+- click góc dưới phải
+- enter
+- esc
+- ctrl a
+- giữ phím L
+- thả L
+- thả hết phím
+
+Nhạc / YouTube
+- mở youtube nhạc chill
+- tìm youtube nhạc học bài
+- chuyển bài youtube
+- tạm dừng youtube
+- tăng âm lượng youtube
+- giảm âm lượng youtube
+
+Tệp / tiện ích
+- gửi tệp bằng nút kẹp giấy
+- mở temp mail
+- tạo qr https://example.com trong mmo
+- tạo mật khẩu trong mmo
+- hash sha256 nội dung trong mmo
+
+Máy tính
+- tắt máy
+- tắt máy sau 30 phút
+- khóa máy
+- sleep máy
+- bật chế độ ngủ quên sau 45 phút từ 23 đến 6
+- trạng thái chế độ ngủ quên
+
+Mẹo: app sẽ ghi nhớ lệnh hay dùng và gợi ý hoàn thiện khi bạn đang nhập."""
 
 
 def _now_iso() -> str:
@@ -175,7 +237,190 @@ def _format_bytes(size: int) -> str:
 
 def _fold_text(value: str) -> str:
     normalized = unicodedata.normalize("NFD", str(value or "").casefold())
-    return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
+    return "".join(char for char in normalized if unicodedata.category(char) != "Mn").replace("đ", "d")
+
+
+def _is_mobile_help_command(command: str) -> bool:
+    normalized = _fold_text(command).strip()
+    return normalized in {
+        "help",
+        "/help",
+        "menu",
+        "tro giup",
+        "huong dan",
+        "lenh",
+        "danh sach lenh",
+        "cau lenh",
+        "tinh nang",
+        "chuc nang",
+    }
+
+
+def _mobile_help_payload() -> dict[str, Any]:
+    return mobile_payload_from_result(
+        ActionResult.ok(
+            MOBILE_REMOTE_HELP_TEXT,
+            mobile_card_title="Trợ giúp AT Remote",
+            mobile_buttons=[
+                {"label": "Trạng thái máy", "command": "trạng thái máy"},
+                {"label": "Chụp màn hình", "command": "chụp màn hình"},
+                {"label": "Mở temp mail", "command": "mở temp mail"},
+            ],
+        )
+    )
+
+
+def _merge_mobile_buttons(data: dict[str, Any], buttons: list[dict[str, str]]) -> None:
+    current = [item for item in list(data.get("mobile_buttons") or []) if isinstance(item, dict)]
+    seen = {(str(item.get("label") or item.get("text") or ""), str(item.get("command") or ""), str(item.get("url") or "")) for item in current}
+    for button in buttons:
+        label = str(button.get("label") or button.get("text") or "").strip()
+        command = str(button.get("command") or "").strip()
+        url = str(button.get("url") or "").strip()
+        key = (label, command, url)
+        if label and key not in seen:
+            current.append(button)
+            seen.add(key)
+    data["mobile_buttons"] = current[:8]
+
+
+def _set_mobile_card(data: dict[str, Any], *, title: str = "", summary: str = "", buttons: list[dict[str, str]] | None = None) -> None:
+    if title:
+        data.setdefault("mobile_card_title", title)
+    if summary:
+        data.setdefault("mobile_summary", summary)
+    if buttons:
+        _merge_mobile_buttons(data, buttons)
+
+
+def _decorate_mobile_result(result: ActionResult, command: str) -> ActionResult:
+    if not isinstance(result.data, dict):
+        result.data = {}
+    data = result.data
+    folded = _fold_text(command)
+    if result.status == ActionStatus.NEED_CONFIRM and folded in {"di ngu", "che do di ngu"}:
+        _set_mobile_card(
+            data,
+            title="Xác nhận Đi ngủ",
+            summary="Preset này sẽ khóa/tắt màn hình và đặt lịch nguồn máy.",
+        )
+    if result.status == ActionStatus.NEED_CHOICE and folded in {"don may", "don dep may"}:
+        _set_mobile_card(
+            data,
+            title="Dọn máy",
+            summary="Chọn app cần xử lý từ danh sách bên dưới.",
+            buttons=[{"label": "Trạng thái", "command": "trạng thái máy"}],
+        )
+    if result.status == ActionStatus.SUCCESS:
+        if {"cpu_percent", "ram_percent", "disk_percent"} & set(data.keys()):
+            _set_mobile_card(
+                data,
+                title="Trạng thái máy",
+                summary="Máy đã cập nhật trạng thái.",
+                buttons=[
+                    {"label": "Chụp màn hình", "command": "chụp màn hình"},
+                    {"label": "Dọn máy", "command": "dọn máy"},
+                    {"label": "Thả hết phím", "command": "thả hết phím"},
+                ],
+            )
+        elif data.get("telegram_photo_path") or data.get("image_path"):
+            _set_mobile_card(
+                data,
+                title="Đã chụp màn hình",
+                summary="Ảnh đã sẵn sàng.",
+                buttons=[
+                    {"label": "Chụp lại", "command": "chụp màn hình"},
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                ],
+            )
+        elif data.get("telegram_document_path") or data.get("mobile_uploaded_file"):
+            _set_mobile_card(
+                data,
+                title="Tệp đã sẵn sàng",
+                summary="Tệp đã được lưu trên máy tính.",
+                buttons=[
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                    {"label": "Chụp màn hình", "command": "chụp màn hình"},
+                ],
+            )
+        elif "clipboard_text" in data:
+            _set_mobile_card(
+                data,
+                title="Đã gửi sang máy",
+                summary="Nội dung đã nằm trong clipboard máy tính.",
+                buttons=[
+                    {"label": "Dán", "command": "ctrl v"},
+                    {"label": "Xóa clipboard", "command": "xóa clipboard"},
+                ],
+            )
+        elif (data.get("scheduled_power") or "tat may" in folded or "shutdown" in folded) and folded not in {"di ngu", "che do di ngu"}:
+            _set_mobile_card(
+                data,
+                title="Đã hẹn nguồn máy",
+                summary="Lịch nguồn máy đã được cập nhật.",
+                buttons=[
+                    {"label": "Hủy hẹn", "command": "hủy hẹn giờ tắt máy"},
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                ],
+            )
+        elif folded.startswith("giu ") or " giu " in f" {folded} ":
+            _set_mobile_card(
+                data,
+                title="Đang giữ phím",
+                summary=_mobile_text(result.message),
+                buttons=[
+                    {"label": "Thả hết phím", "command": "thả hết phím"},
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                ],
+            )
+        elif folded in {"tha het phim", "tha tat ca phim"}:
+            _set_mobile_card(
+                data,
+                title="Đã thả phím",
+                summary="Các phím đang giữ đã được thả.",
+                buttons=[{"label": "Trạng thái", "command": "trạng thái máy"}],
+            )
+        elif folded in {"di ngu", "che do di ngu"}:
+            _set_mobile_card(
+                data,
+                title="Đã bật Đi ngủ",
+                summary="Preset đi ngủ đã chạy trên máy tính.",
+                buttons=[
+                    {"label": "Hủy hẹn tắt", "command": "hủy hẹn giờ tắt máy"},
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                ],
+            )
+        elif folded in {"ve nha", "ve may"}:
+            _set_mobile_card(
+                data,
+                title="Đã bật Về nhà",
+                summary="Máy đã mở các app cần dùng.",
+                buttons=[
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                    {"label": "Chụp màn hình", "command": "chụp màn hình"},
+                ],
+            )
+        elif folded in {"tap trung", "che do tap trung"}:
+            _set_mobile_card(
+                data,
+                title="Đã bật Tập trung",
+                summary="Các bước tập trung đã được gửi tới máy.",
+                buttons=[
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                    {"label": "Thả hết phím", "command": "thả hết phím"},
+                ],
+            )
+        elif folded in {"don may", "don dep may"}:
+            _set_mobile_card(
+                data,
+                title="Dọn máy",
+                summary="Chọn mục cần xử lý nếu app trả danh sách.",
+                buttons=[
+                    {"label": "App đang chạy", "command": "máy đang chạy gì"},
+                    {"label": "Trạng thái", "command": "trạng thái máy"},
+                ],
+            )
+    return result
 
 
 def _permission_enabled(device: dict[str, Any], group: str) -> bool:
@@ -763,6 +1008,10 @@ class MobileRemoteBridge:
             return mobile_payload_from_result(ActionResult.err("Bạn chưa nhập yêu cầu.", code=ErrorCode.UNKNOWN))
         if len(text) > MAX_COMMAND_LENGTH:
             return mobile_payload_from_result(ActionResult.err("Yêu cầu quá dài.", code=ErrorCode.UNKNOWN))
+        if _is_mobile_help_command(text):
+            payload = _mobile_help_payload()
+            payload["device"] = _public_device(device)
+            return payload
         required_permission = _permission_group_for_command(text)
         if required_permission and not _permission_enabled(device, required_permission):
             return _permission_denied_payload(required_permission)
@@ -783,6 +1032,7 @@ class MobileRemoteBridge:
                 result = self.engine.handle_turn(text)
             except Exception as exc:
                 result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
+        result = _decorate_mobile_result(result, text)
         payload = mobile_payload_from_result(
             result,
             file_resolver=lambda path, kind: self._register_file(path, public_device, kind=kind),
@@ -885,8 +1135,10 @@ class MobileRemoteBridge:
                     result = self.engine.handle_turn(engine_command)
                 except Exception as exc:
                     result = ActionResult.err(f"Lỗi nội bộ: {exc}", code=ErrorCode.INTERNAL_ERROR)
+            result = _decorate_mobile_result(result, command)
         else:
             result = ActionResult.ok("Tệp đã sẵn sàng.", mobile_uploaded_file=str(target))
+            result = _decorate_mobile_result(result, "gửi tệp")
             response = mobile_payload_from_result(result)
             response["cards"] = [upload_card]
             response["files"] = [uploaded_file]
@@ -934,6 +1186,53 @@ class MobileRemoteBridge:
         if command:
             self._emit("command", event_payload)
         return response
+
+    def handle_share(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {
+                "ok": False,
+                "status": "unauthorized",
+                "message": "Không kết nối được với máy tính.",
+                "cards": [{"type": "error", "title": "Mất kết nối", "message": "Hãy kết nối lại với ATAssistant."}],
+                "buttons": [{"label": "Thử lại", "command": "__retry__"}],
+            }
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return mobile_payload_from_result(ActionResult.err("Không có nội dung để gửi sang máy tính.", code=ErrorCode.UNKNOWN))
+        public_device = _public_device(device)
+        self._emit(
+            "command_received",
+            {
+                "device": public_device,
+                "command": "share_text",
+                "displayCommand": "Gửi từ Android Share",
+            },
+        )
+        result = executor.clipboard_bridge("set", text=text)
+        if isinstance(result.data, dict):
+            buttons = [{"label": "Dán", "command": "ctrl v"}, {"label": "Xóa clipboard", "command": "xóa clipboard"}]
+            if URL_RE.match(text):
+                buttons.insert(0, {"label": "Mở link", "command": f"mở {text}"})
+            _set_mobile_card(
+                result.data,
+                title="Đã gửi sang máy",
+                summary="Nội dung đã nằm trong clipboard máy tính.",
+                buttons=buttons,
+            )
+        payload_out = mobile_payload_from_result(result)
+        payload_out["device"] = public_device
+        event_payload = {
+            "device": public_device,
+            "command": "share_text",
+            "displayCommand": "Gửi từ Android Share",
+            "status": payload_out.get("status"),
+            "result": result,
+            "payload": payload_out,
+        }
+        self._emit("command_result", event_payload)
+        self._emit("command", event_payload)
+        return payload_out
 
     def list_uploads(self, auth_key: str) -> dict[str, Any]:
         device = self._authenticate(auth_key)
@@ -1155,6 +1454,10 @@ class MobileRemoteBridge:
                     body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
                     self._send_json(bridge.handle_upload(self._auth_key(), body))
                     return
+                if parsed.path == "/api/share":
+                    body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
+                    self._send_json(bridge.handle_share(self._auth_key(), body))
+                    return
                 if parsed.path == "/api/uploads/delete":
                     body = self._read_json()
                     self._send_json(bridge.delete_upload(self._auth_key(), body))
@@ -1363,6 +1666,8 @@ def mobile_payload_from_result(
 
 def _friendly_message(result: ActionResult) -> str:
     data = result.data if isinstance(result.data, dict) else {}
+    if data.get("mobile_summary"):
+        return _mobile_text(data.get("mobile_summary"))
     if data.get("mailbox_address"):
         return "Email tạm đã sẵn sàng."
     if {"cpu_percent", "ram_percent", "disk_percent"} & set(data.keys()):
@@ -1387,6 +1692,7 @@ def _cards_from_result(
 ) -> list[dict[str, Any]]:
     data = result.data if isinstance(result.data, dict) else {}
     cards: list[dict[str, Any]] = []
+    summary = _mobile_text(data.get("mobile_summary") or result.message)
 
     if result.status == ActionStatus.ERROR:
         return [{"type": "error", "title": "Có lỗi xảy ra", "message": _friendly_message(result)}]
@@ -1395,7 +1701,7 @@ def _cards_from_result(
         return [
             {
                 "type": "confirm",
-                "title": "Cần xác nhận",
+                "title": _mobile_text(data.get("mobile_card_title") or "Cần xác nhận"),
                 "message": _friendly_message(result),
                 "tone": "danger",
             }
@@ -1412,13 +1718,13 @@ def _cards_from_result(
 
     if result.status == ActionStatus.NEED_CHOICE:
         choices = [str(item) for item in list(data.get("choices") or [])]
-        return [{"type": "choice", "title": "Chọn một mục", "message": _mobile_text(result.message), "choices": choices}]
+        return [{"type": "choice", "title": _mobile_text(data.get("mobile_card_title") or "Chọn một mục"), "message": summary, "choices": choices}]
 
-    image_card = _image_card_from_data(data, result.message, file_resolver=file_resolver)
+    image_card = _image_card_from_data(data, summary, file_resolver=file_resolver)
     if image_card:
         cards.append(image_card)
 
-    document_card = _document_card_from_data(data, result.message, file_resolver=file_resolver)
+    document_card = _document_card_from_data(data, summary, file_resolver=file_resolver)
     if document_card:
         cards.append(document_card)
 
@@ -1445,7 +1751,7 @@ def _cards_from_result(
                     {"label": "Pin", "value": _percent(data.get("battery_percent")) if data.get("battery_percent") is not None else "Không có thông tin"},
                     {"label": "Đang dùng", "value": str(data.get("foreground_window") or "Không rõ")},
                 ],
-                "message": _mobile_text(result.message),
+                "message": summary,
             }
         )
 
@@ -1460,7 +1766,7 @@ def _cards_from_result(
                 "type": "copy",
                 "title": f"Hash {str(data.get('algorithm') or '').upper()}".strip(),
                 "items": items,
-                "message": _mobile_text(result.message),
+                "message": summary,
             }
         )
 
@@ -1479,10 +1785,11 @@ def _cards_from_result(
         if data.get(key)
     ]
     if copy_items and not any(card.get("type") == "copy" for card in cards):
-        cards.append({"type": "copy", "title": "Kết quả", "items": copy_items, "message": _mobile_text(result.message)})
+        cards.append({"type": "copy", "title": "Kết quả", "items": copy_items, "message": summary})
 
     if not cards:
-        cards.append({"type": "message", "title": "Kết quả", "message": _mobile_text(result.message)})
+        title = _mobile_text(data.get("mobile_card_title") or "Kết quả")
+        cards.append({"type": "message", "title": title, "message": summary})
     return cards
 
 

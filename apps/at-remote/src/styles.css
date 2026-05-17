@@ -482,6 +482,11 @@ button:disabled {
   padding-inline: 10px;
 }
 
+.quick-actions-panel {
+  display: grid;
+  gap: 8px;
+}
+
 .quick-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -534,6 +539,113 @@ button:disabled {
   line-height: 1.15;
 }
 
+.context-actions,
+.macro-actions,
+.frequent-commands,
+.command-suggestions {
+  padding: 9px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 -8px 24px rgba(21, 19, 33, 0.08);
+}
+
+.context-actions,
+.macro-actions,
+.frequent-commands {
+  display: grid;
+  gap: 7px;
+}
+
+.context-actions > span,
+.macro-actions > span,
+.frequent-commands > span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.macro-actions > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.context-actions > div,
+.frequent-commands > div,
+.command-suggestions {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.context-actions > div::-webkit-scrollbar,
+.frequent-commands > div::-webkit-scrollbar,
+.command-suggestions::-webkit-scrollbar {
+  display: none;
+}
+
+.context-actions button,
+.macro-actions button,
+.frequent-commands button,
+.command-suggestions button {
+  flex: 0 0 auto;
+  max-width: min(82vw, 330px);
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fafbff;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.context-actions button {
+  background: #f0edff;
+  color: var(--blue);
+  border-color: rgba(124, 58, 237, 0.2);
+}
+
+.macro-actions button {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: center;
+  background: #fff4ed;
+  border-color: rgba(255, 90, 61, 0.28);
+  color: var(--teal-dark);
+}
+
+.macro-actions button.risky {
+  background: var(--danger-soft);
+  border-color: rgba(225, 29, 72, 0.28);
+  color: var(--danger);
+}
+
+.context-actions button,
+.macro-actions button,
+.frequent-commands button,
+.command-suggestions span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-suggestions button:first-child {
+  border-color: rgba(255, 90, 61, 0.28);
+  background: #fff4ed;
+}
+
+.command-suggestions svg {
+  color: var(--teal-dark);
+  flex: 0 0 auto;
+}
+
 .conversation {
   overflow-y: auto;
   min-height: 0;
@@ -547,6 +659,223 @@ button:disabled {
 
 .conversation.panel-view {
   gap: 10px;
+}
+
+.dashboard-mini,
+.command-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 10px 26px rgba(21, 19, 33, 0.07);
+}
+
+.dashboard-mini {
+  display: grid;
+  gap: 10px;
+}
+
+.dashboard-top,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-top div,
+.section-heading {
+  min-width: 0;
+}
+
+.dashboard-top span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dashboard-top strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.dashboard-metric {
+  min-height: 52px;
+  border-radius: 8px;
+  background: #f0f3f9;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 8px;
+}
+
+.dashboard-metric span,
+.recent-command-list small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.dashboard-metric strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.dashboard-actions {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dashboard-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.dashboard-actions button,
+.pinned-list button,
+.recent-command-list button {
+  flex: 0 0 auto;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fafbff;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.commands-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.section-heading h2 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.compact-button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.macro-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.macro-editor-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.55fr) minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.macro-editor-row input,
+.inline-editor input,
+.lazy-guard-grid input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fafbff;
+  padding: 0 10px;
+  outline: none;
+}
+
+.pinned-list,
+.recent-command-list {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-top: 10px;
+  scrollbar-width: none;
+}
+
+.pinned-list::-webkit-scrollbar,
+.recent-command-list::-webkit-scrollbar {
+  display: none;
+}
+
+.recent-command-list button {
+  display: grid;
+  justify-items: start;
+  max-width: min(78vw, 330px);
+  height: auto;
+  padding: 8px 10px;
+}
+
+.recent-command-list span,
+.pinned-list button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.lazy-guard-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.lazy-guard-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.widget-command-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.widget-command-list div {
+  display: grid;
+  gap: 5px;
+  border-radius: 8px;
+  background: #f0f3f9;
+  padding: 9px;
+}
+
+.widget-command-list span {
+  font-weight: 850;
+}
+
+.widget-command-list code {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  font-size: 0.76rem;
 }
 
 .empty-state {
@@ -948,6 +1277,34 @@ button:disabled {
   padding: 0 12px;
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(84px + env(safe-area-inset-bottom));
+  z-index: 40;
+  width: min(92vw, 420px);
+  transform: translateX(-50%);
+  border-radius: 8px;
+  padding: 11px 13px;
+  background: #111827;
+  color: #ffffff;
+  box-shadow: 0 16px 34px rgba(21, 19, 33, 0.22);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
+.toast.success {
+  background: #0f8b5f;
+}
+
+.toast.warning {
+  background: #b45309;
+}
+
+.toast.error {
+  background: #be123c;
+}
+
 .viewer-backdrop {
   position: fixed;
   inset: 0;
@@ -1049,6 +1406,20 @@ button:disabled {
   }
 
   .quick-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-actions > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-metrics,
+  .lazy-guard-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .macro-editor-row,
+  .inline-editor {
     grid-template-columns: 1fr;
   }
 

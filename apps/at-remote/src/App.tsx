@@ -1,5 +1,5 @@
 import { App as CapacitorApp } from "@capacitor/app";
-import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import { Capacitor, CapacitorHttp, registerPlugin } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import {
@@ -21,7 +21,9 @@ import {
   Paperclip,
   QrCode,
   RefreshCw,
+  Repeat2,
   RotateCcw,
+  Save,
   Search,
   Send,
   Share2,
@@ -38,7 +40,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 type ConnectionStep = "checking" | "connect" | "pending" | "connected";
 type MessageRole = "user" | "assistant";
-type AppView = "chat" | "files" | "permissions";
+type AppView = "chat" | "files" | "permissions" | "commands";
 
 type MobileButton = {
   label: string;
@@ -83,6 +85,18 @@ type CommandResult = {
   requiresConfirmation?: boolean;
 };
 
+type SharedPayload = {
+  ok?: boolean;
+  type?: "text" | "file";
+  text?: string;
+  subject?: string;
+  name?: string;
+  mime?: string;
+  size?: number;
+  dataBase64?: string;
+  message?: string;
+};
+
 type ChatMessage = {
   id: string;
   role: MessageRole;
@@ -108,6 +122,27 @@ type QuickAction = {
   suffix?: string;
   view?: AppView;
   action?: "clear-history";
+};
+
+type CommandUsage = {
+  command: string;
+  count: number;
+  lastUsed: number;
+};
+
+type MacroAction = {
+  label: string;
+  command: string;
+};
+
+type ToastState = {
+  text: string;
+  tone: "success" | "warning" | "error";
+};
+
+type SystemStatusItem = {
+  label: string;
+  value: string;
 };
 
 type JsonRequestOptions = {
@@ -160,9 +195,96 @@ const DEVICE_NAME_KEY = "atRemoteDeviceName";
 const BRAND_LOGO_SRC = "/brand-logo.png";
 const BRAND_SPLASH_SRC = "/splash-mobile.webp";
 const CHAT_HISTORY_PREFIX = "atRemoteChatHistory:";
+const COMMAND_USAGE_PREFIX = "atRemoteCommandUsage:";
+const MACRO_STORAGE_KEY = "atRemoteMacros";
+const PINNED_COMMANDS_KEY = "atRemotePinnedCommands";
 const MAX_STORED_MESSAGES = 120;
+const MAX_STORED_COMMANDS = 36;
+const MAX_COMMAND_SUGGESTIONS = 6;
 const BRAND_INTRO_HOLD_MS = 920;
 const BRAND_INTRO_FADE_MS = 260;
+
+const ShareReceiver = registerPlugin<{
+  getSharedPayload: () => Promise<SharedPayload>;
+  clearSharedPayload: () => Promise<{ ok: boolean }>;
+}>("ShareReceiver");
+
+const BASE_COMMAND_SUGGESTIONS = [
+  "help",
+  "trạng thái máy",
+  "máy đang chạy gì",
+  "cửa sổ đang mở",
+  "mở chrome",
+  "mở youtube nhạc chill",
+  "tìm youtube nhạc học bài",
+  "chuyển bài youtube",
+  "tạm dừng youtube",
+  "tăng âm lượng youtube",
+  "giảm âm lượng youtube",
+  "chụp màn hình",
+  "click giữa màn hình",
+  "click góc dưới phải",
+  "nhập text Xin chào",
+  "gửi text Xin chào",
+  "chọn ô comment TikTok",
+  "nhắn Chào mọi người",
+  "giữ phím L",
+  "giữ space 3 giây",
+  "thả L",
+  "thả hết phím",
+  "ctrl a",
+  "enter",
+  "esc",
+  "tải lại trang",
+  "mở tab mới",
+  "đóng tab hiện tại",
+  "tab kế tiếp",
+  "quay lại trang",
+  "mở temp mail",
+  "tạo temp mail mới",
+  "tạo qr https://example.com trong mmo",
+  "tạo mật khẩu trong mmo",
+  "hash sha256 nội dung trong mmo",
+  "đóng app nặng",
+  "đóng web giải trí",
+  "đóng tất cả trừ chrome và vscode",
+  "tắt máy sau 30 phút",
+  "khóa máy",
+  "sleep máy",
+  "bật chế độ ngủ quên sau 45 phút từ 23 đến 6",
+  "trạng thái chế độ ngủ quên",
+  "tắt chế độ ngủ quên"
+];
+
+const COMMON_COMMAND_FIXES = [
+  "thả hết phím",
+  "tắt máy sau 30 phút",
+  "trạng thái máy",
+  "chụp màn hình",
+  "giữ phím L",
+  "giữ space 3 giây",
+  "đóng app nặng",
+  "đóng tất cả trừ chrome và vscode"
+];
+
+const CONTEXT_COMMAND_SUGGESTIONS: Array<{ match: string[]; commands: string[] }> = [
+  { match: ["giu", "giu phim"], commands: ["giữ phím L", "giữ space 3 giây", "giữ ctrl shift"] },
+  { match: ["tha", "tha phim"], commands: ["thả L", "thả hết phím", "thả ctrl shift"] },
+  { match: ["tat", "tat may"], commands: ["tắt máy sau 30 phút", "tắt máy lúc 23h30", "tắt chế độ ngủ quên"] },
+  { match: ["chup", "chup man"], commands: ["chụp màn hình"] },
+  { match: ["trang thai", "may"], commands: ["trạng thái máy", "máy đang chạy gì"] },
+  { match: ["youtube", "nhac"], commands: ["mở youtube nhạc chill", "chuyển bài youtube", "tạm dừng youtube"] },
+  { match: ["dong"], commands: ["đóng app nặng", "đóng web giải trí", "đóng tất cả trừ chrome và vscode"] }
+];
+
+const DEFAULT_MACRO_ACTIONS: MacroAction[] = [
+  { label: "Đi ngủ", command: "đi ngủ" },
+  { label: "Về nhà", command: "về nhà" },
+  { label: "Dọn máy", command: "dọn máy" },
+  { label: "Tập trung", command: "tập trung" }
+];
+
+const DEFAULT_PINNED_COMMANDS = ["trạng thái máy", "chụp màn hình", "chuyển bài youtube", "thả hết phím"];
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -186,6 +308,9 @@ const isAndroidDevice = () => /android/i.test(navigator.userAgent || "") || Capa
 
 const pairDeepLink = (base: string, code: string) =>
   `atremote://pair?base=${encodeURIComponent(normalizeBaseUrl(base))}&code=${encodeURIComponent(code || "")}`;
+
+const commandDeepLink = (command: string) =>
+  `atremote://command?text=${encodeURIComponent(command.trim())}`;
 
 const parsePairUrl = (rawUrl: string) => {
   try {
@@ -211,6 +336,18 @@ const parsePairUrl = (rawUrl: string) => {
     return null;
   }
   return null;
+};
+
+const parseCommandUrl = (rawUrl: string) => {
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol === "atremote:" && url.hostname === "command") {
+      return (url.searchParams.get("text") || url.searchParams.get("command") || "").trim();
+    }
+    return (url.searchParams.get("command") || "").trim();
+  } catch {
+    return "";
+  }
 };
 
 const defaultBaseUrl = () => {
@@ -352,6 +489,178 @@ const clearChatHistory = (baseUrl: string) => {
   localStorage.removeItem(`${CHAT_HISTORY_PREFIX}${normalizeBaseUrl(baseUrl)}`);
 };
 
+const foldCommand = (value: string) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+
+const usageKey = (baseUrl: string) => `${COMMAND_USAGE_PREFIX}${normalizeBaseUrl(baseUrl)}`;
+
+const readCommandUsage = (baseUrl: string): CommandUsage[] => {
+  try {
+    const raw = localStorage.getItem(usageKey(baseUrl));
+    const parsed = raw ? (JSON.parse(raw) as CommandUsage[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item.command === "string" && item.command.trim())
+      .map((item) => ({
+        command: item.command.trim(),
+        count: Number.isFinite(Number(item.count)) ? Number(item.count) : 1,
+        lastUsed: Number.isFinite(Number(item.lastUsed)) ? Number(item.lastUsed) : 0
+      }))
+      .sort((left, right) => right.count - left.count || right.lastUsed - left.lastUsed)
+      .slice(0, MAX_STORED_COMMANDS);
+  } catch {
+    return [];
+  }
+};
+
+const saveCommandUsage = (baseUrl: string, usage: CommandUsage[]) => {
+  localStorage.setItem(usageKey(baseUrl), JSON.stringify(usage.slice(0, MAX_STORED_COMMANDS)));
+};
+
+const rememberCommandUsage = (baseUrl: string, command: string) => {
+  const clean = command.trim();
+  if (!clean || clean === "__retry__") return readCommandUsage(baseUrl);
+  const folded = foldCommand(clean);
+  const usage = readCommandUsage(baseUrl);
+  const index = usage.findIndex((item) => foldCommand(item.command) === folded);
+  if (index >= 0) {
+    usage[index] = {
+      ...usage[index],
+      command: clean,
+      count: usage[index].count + 1,
+      lastUsed: Date.now()
+    };
+  } else {
+    usage.push({ command: clean, count: 1, lastUsed: Date.now() });
+  }
+  usage.sort((left, right) => right.count - left.count || right.lastUsed - left.lastUsed);
+  const next = usage.slice(0, MAX_STORED_COMMANDS);
+  saveCommandUsage(baseUrl, next);
+  return next;
+};
+
+const normalizeMacros = (items: MacroAction[]) =>
+  items
+    .map((item, index) => ({
+      label: String(item.label || DEFAULT_MACRO_ACTIONS[index]?.label || `Macro ${index + 1}`).trim(),
+      command: String(item.command || DEFAULT_MACRO_ACTIONS[index]?.command || "").trim()
+    }))
+    .filter((item) => item.label && item.command)
+    .slice(0, 8);
+
+const readMacros = (): MacroAction[] => {
+  try {
+    const raw = localStorage.getItem(MACRO_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as MacroAction[]) : [];
+    return normalizeMacros(Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_MACRO_ACTIONS);
+  } catch {
+    return DEFAULT_MACRO_ACTIONS;
+  }
+};
+
+const saveMacros = (items: MacroAction[]) => {
+  const clean = normalizeMacros(items);
+  localStorage.setItem(MACRO_STORAGE_KEY, JSON.stringify(clean));
+  return clean;
+};
+
+const readPinnedCommands = (): string[] => {
+  try {
+    const raw = localStorage.getItem(PINNED_COMMANDS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    return (Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_PINNED_COMMANDS)
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .slice(0, 12);
+  } catch {
+    return DEFAULT_PINNED_COMMANDS;
+  }
+};
+
+const savePinnedCommands = (items: string[]) => {
+  const seen = new Set<string>();
+  const clean = items
+    .map((item) => String(item || "").trim())
+    .filter((item) => {
+      const folded = foldCommand(item);
+      if (!folded || seen.has(folded)) return false;
+      seen.add(folded);
+      return true;
+    })
+    .slice(0, 12);
+  localStorage.setItem(PINNED_COMMANDS_KEY, JSON.stringify(clean));
+  return clean;
+};
+
+const isRiskyCommand = (command: string) => {
+  const folded = foldCommand(command);
+  return /(^|\s)(tat may|shutdown|khoi dong lai|restart|sleep|hibernate|xoa|delete|dong tat ca|dong app nang|don may)(\s|$)/i.test(
+    folded
+  );
+};
+
+const extractSystemStatusItems = (cards?: MobileCard[]) => {
+  const status = (cards || []).find((card) => card.type === "system_status");
+  return (status?.items || []).map((item) => ({ label: item.label, value: item.value }));
+};
+
+const buildCommandSuggestions = (
+  draft: string,
+  usage: CommandUsage[],
+  quickActions: QuickAction[],
+  macros: MacroAction[],
+  pinnedCommands: string[]
+) => {
+  const query = draft.trim();
+  if (!query) return [];
+  const foldedQuery = foldCommand(query);
+  const seen = new Set<string>();
+  const contextCandidates = CONTEXT_COMMAND_SUGGESTIONS.filter((group) =>
+    group.match.some((match) => match.startsWith(foldedQuery) || foldedQuery.startsWith(match))
+  ).flatMap((group) => group.commands);
+  const candidates = [
+    ...contextCandidates,
+    ...COMMON_COMMAND_FIXES,
+    ...usage.map((item) => item.command),
+    ...quickActions.map((action) => action.command || ""),
+    ...macros.map((action) => action.command),
+    ...pinnedCommands,
+    ...BASE_COMMAND_SUGGESTIONS
+  ].filter((item): item is string => Boolean(item && item.trim()));
+
+  return candidates
+    .map((command, index) => {
+      const clean = command.trim();
+      const folded = foldCommand(clean);
+      const sameVisibleText = clean.toLocaleLowerCase("vi-VN") === query.toLocaleLowerCase("vi-VN");
+      if (!folded || (folded === foldedQuery && sameVisibleText) || seen.has(folded)) return null;
+      seen.add(folded);
+      const usageItem = usage.find((item) => foldCommand(item.command) === folded);
+      const contextIndex = contextCandidates.findIndex((item) => foldCommand(item) === folded);
+      const fixIndex = COMMON_COMMAND_FIXES.findIndex((item) => foldCommand(item) === folded);
+      const starts = folded.startsWith(foldedQuery);
+      const contains = folded.includes(foldedQuery);
+      const correctionMatch = folded === foldedQuery && !sameVisibleText;
+      if (!starts && !contains && !correctionMatch) return null;
+      return {
+        command: clean,
+        score:
+          (correctionMatch ? -80 : contextIndex >= 0 ? -50 + contextIndex : fixIndex >= 0 ? -30 + fixIndex : starts ? 0 : 20) -
+          (usageItem?.count || 0) +
+          index / 1000
+      };
+    })
+    .filter((item): item is { command: string; score: number } => Boolean(item))
+    .sort((left, right) => left.score - right.score)
+    .slice(0, MAX_COMMAND_SUGGESTIONS)
+    .map((item) => item.command);
+};
+
 const readSavedConnection = (): SavedConnection | null => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -400,6 +709,11 @@ const blobToBase64 = (blob: Blob) =>
 const safeShareFileName = (name: string) =>
   (String(name || "at-remote-file").replace(/[\\/:*?"<>|\x00-\x1f]+/g, "_").trim() || "at-remote-file").slice(0, 120);
 
+const previewText = (value: string, limit = 180) => {
+  const clean = String(value || "").replace(/\s+/g, " ").trim();
+  return clean.length > limit ? `${clean.slice(0, limit - 3)}...` : clean;
+};
+
 const isImageFile = (file: RemoteFile) =>
   String(file.mime || "").toLowerCase().startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(file.name || "");
 
@@ -442,6 +756,12 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [lastCommand, setLastCommand] = useState("");
+  const [commandUsage, setCommandUsage] = useState<CommandUsage[]>([]);
+  const [macros, setMacros] = useState<MacroAction[]>(readMacros());
+  const [pinnedCommands, setPinnedCommands] = useState<string[]>(readPinnedCommands());
+  const [lastStatusItems, setLastStatusItems] = useState<SystemStatusItem[]>([]);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const [pendingLaunchCommand, setPendingLaunchCommand] = useState(parseCommandUrl(window.location.href));
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
   const [view, setView] = useState<AppView>("chat");
@@ -460,6 +780,8 @@ function App() {
   const stepRef = useRef<ConnectionStep>("checking");
   const stickToBottomRef = useRef(true);
   const autoDiscoveryStartedRef = useRef(false);
+  const handledLaunchUrlsRef = useRef(new Set<string>());
+  const sharedPayloadBusyRef = useRef(false);
 
   const setConnectionStep = useCallback((next: ConnectionStep) => {
     stepRef.current = next;
@@ -483,6 +805,16 @@ function App() {
   const statusTone =
     connectionText === "Mất kết nối" ? "lost" : connectionText === "Đã kết nối" ? "ready" : "neutral";
 
+  const showToast = useCallback((text: string, tone: ToastState["tone"] = "success") => {
+    setToast({ text, tone });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const id = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(id);
+  }, [toast]);
+
   const applyPairLaunch = useCallback((url: string) => {
     const pair = parsePairUrl(url);
     if (!pair) return false;
@@ -497,8 +829,25 @@ function App() {
     return true;
   }, [setConnectionStep]);
 
+  const applyCommandLaunch = useCallback((url: string) => {
+    const command = parseCommandUrl(url);
+    if (!command) return false;
+    setPendingLaunchCommand(command);
+    setDraft(command);
+    setShowQuickActions(false);
+    setView("chat");
+    return true;
+  }, []);
+
+  const handleLaunchUrl = useCallback((url: string) => {
+    if (!url || handledLaunchUrlsRef.current.has(url)) return;
+    handledLaunchUrlsRef.current.add(url);
+    if (applyCommandLaunch(url)) return;
+    applyPairLaunch(url);
+  }, [applyCommandLaunch, applyPairLaunch]);
+
   useEffect(() => {
-    applyPairLaunch(window.location.href);
+    handleLaunchUrl(window.location.href);
     if (!Capacitor.isNativePlatform() && isAndroidDevice()) {
       const pair = parsePairUrl(window.location.href);
       const key = pair ? `atRemoteDeepLink:${pair.base}:${pair.code}` : "";
@@ -513,17 +862,17 @@ function App() {
     if (!Capacitor.isNativePlatform()) return;
     let removeListener: (() => void) | undefined;
     void CapacitorApp.getLaunchUrl().then((result) => {
-      if (result?.url) applyPairLaunch(result.url);
+      if (result?.url) handleLaunchUrl(result.url);
     });
     void CapacitorApp.addListener("appUrlOpen", (event) => {
-      applyPairLaunch(event.url);
+      handleLaunchUrl(event.url);
     }).then((handle) => {
       removeListener = () => {
         void handle.remove();
       };
     });
     return () => removeListener?.();
-  }, [applyPairLaunch]);
+  }, [handleLaunchUrl]);
 
   const enterConnected = useCallback((saved: SavedConnection) => {
     saveConnection(saved);
@@ -532,6 +881,7 @@ function App() {
     setConnectionStep("connected");
     setConnectionText("Đã kết nối");
     setView("chat");
+    setCommandUsage(readCommandUsage(saved.baseUrl));
     const history = readChatHistory(saved.baseUrl);
     setMessages((current) =>
       current.length
@@ -587,6 +937,10 @@ function App() {
     const history = readChatHistory(connection.baseUrl);
     setMessages(history.length ? history : [connectedWelcomeMessage()]);
   }, [connection?.baseUrl, messages.length]);
+
+  useEffect(() => {
+    setCommandUsage(connection?.baseUrl ? readCommandUsage(connection.baseUrl) : []);
+  }, [connection?.baseUrl]);
 
   const handleConversationScroll = () => {
     const element = listRef.current;
@@ -674,6 +1028,7 @@ function App() {
     clearConnection();
     setConnection(null);
     setShowQuickActions(false);
+    setCommandUsage([]);
     setView("chat");
     setConnectionStep("connect");
     setConnectionText("Kết nối với máy tính");
@@ -1003,6 +1358,11 @@ function App() {
         buttons: data.buttons,
         status: data.status
       });
+      const statusItems = extractSystemStatusItems(data.cards);
+      if (statusItems.length) setLastStatusItems(statusItems);
+      if (command.trim() && data.status !== "error") {
+        setCommandUsage(rememberCommandUsage(connection.baseUrl, command.trim()));
+      }
       if (view === "files") void loadUploads();
       setConnectionText("Đã kết nối");
     } catch (error) {
@@ -1020,7 +1380,147 @@ function App() {
     }
   };
 
-  const sendCommand = async (command: string) => {
+  const uploadSharedFilePayload = useCallback(async (payload: SharedPayload) => {
+    if (!connection || !payload.dataBase64) return false;
+    stickToBottomRef.current = true;
+    setView("chat");
+    const pendingId = newId();
+    const name = payload.name || "android-share";
+    setBusy(true);
+    setMessages((current) => [
+      ...current,
+      { id: newId(), role: "user", text: `Gửi từ Android Share\nTệp: ${name}`, time: timeLabel() },
+      { id: pendingId, role: "assistant", text: "Đang gửi sang máy tính...", pending: true, time: timeLabel() }
+    ]);
+    try {
+      const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/upload`, {
+        method: "POST",
+        headers: { "X-AT-Remote-Key": connection.authKey },
+        data: {
+          name,
+          mime: payload.mime || "application/octet-stream",
+          size: payload.size || 0,
+          command: "",
+          dataBase64: payload.dataBase64
+        }
+      });
+      const data = response.data;
+      if (!response.ok || data.status === "unauthorized") throw new Error(friendlyFetchError());
+      replaceMessage(pendingId, {
+        text: data.message,
+        cards: data.cards,
+        buttons: data.buttons,
+        status: data.status
+      });
+      const statusItems = extractSystemStatusItems(data.cards);
+      if (statusItems.length) setLastStatusItems(statusItems);
+      setConnectionText("Đã kết nối");
+      showToast(`Đã gửi tệp: ${name}`, "success");
+      if (view === "files") void loadUploads();
+      return true;
+    } catch (error) {
+      const text = friendlyConnectionError(error);
+      replaceMessage(pendingId, {
+        text,
+        status: "error",
+        cards: [{ type: "error", title: "Mất kết nối", message: text }],
+        buttons: [{ label: "Thử lại", command: "__retry__" }]
+      });
+      setConnectionText("Mất kết nối");
+      showToast(text, "error");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [connection, loadUploads, showToast, view]);
+
+  const shareTextToDesktop = useCallback(async (payload: SharedPayload) => {
+    if (!connection || !payload.text?.trim()) return false;
+    const textToShare = payload.text.trim();
+    stickToBottomRef.current = true;
+    setView("chat");
+    const pendingId = newId();
+    setBusy(true);
+    setMessages((current) => [
+      ...current,
+      { id: newId(), role: "user", text: `Gửi sang máy\n${previewText(textToShare)}`, time: timeLabel() },
+      { id: pendingId, role: "assistant", text: "Đang gửi sang máy tính...", pending: true, time: timeLabel() }
+    ]);
+    try {
+      const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/share`, {
+        method: "POST",
+        headers: { "X-AT-Remote-Key": connection.authKey },
+        data: {
+          type: "text",
+          text: textToShare,
+          subject: payload.subject || ""
+        }
+      });
+      const data = response.data;
+      if (!response.ok || data.status === "unauthorized") throw new Error(friendlyFetchError());
+      replaceMessage(pendingId, {
+        text: data.message,
+        cards: data.cards,
+        buttons: data.buttons,
+        status: data.status
+      });
+      setConnectionText("Đã kết nối");
+      showToast("Đã gửi nội dung sang máy.", "success");
+      return true;
+    } catch (error) {
+      const text = friendlyConnectionError(error);
+      replaceMessage(pendingId, {
+        text,
+        status: "error",
+        cards: [{ type: "error", title: "Mất kết nối", message: text }],
+        buttons: [{ label: "Thử lại", command: "__retry__" }]
+      });
+      setConnectionText("Mất kết nối");
+      showToast(text, "error");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [connection, showToast]);
+
+  const consumeSharedPayload = useCallback(async () => {
+    if (!Capacitor.isNativePlatform() || !connection || step !== "connected" || busy || sharedPayloadBusyRef.current) return;
+    sharedPayloadBusyRef.current = true;
+    try {
+      const payload = await ShareReceiver.getSharedPayload();
+      if (!payload?.ok || !payload.type) return;
+      const handled =
+        payload.type === "file"
+          ? await uploadSharedFilePayload(payload)
+          : await shareTextToDesktop(payload);
+      if (handled) {
+        await ShareReceiver.clearSharedPayload();
+      }
+    } catch {
+      // The plugin is Android-only. Ignore on web and older native builds.
+    } finally {
+      sharedPayloadBusyRef.current = false;
+    }
+  }, [busy, connection, shareTextToDesktop, step, uploadSharedFilePayload]);
+
+  useEffect(() => {
+    void consumeSharedPayload();
+  }, [consumeSharedPayload]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let removeListener: (() => void) | undefined;
+    void CapacitorApp.addListener("appStateChange", (state) => {
+      if (state.isActive) void consumeSharedPayload();
+    }).then((handle) => {
+      removeListener = () => {
+        void handle.remove();
+      };
+    });
+    return () => removeListener?.();
+  }, [consumeSharedPayload]);
+
+  const sendCommand = async (command: string, options: { source?: "manual" | "macro" | "widget" | "repeat" | "quick" } = {}) => {
     const clean = command.trim();
     if (!clean) return;
     if (clean === "__retry__") {
@@ -1029,8 +1529,11 @@ function App() {
     }
     if (!connection) {
       setConnectionStep("connect");
+      showToast("Cần kết nối với máy tính trước.", "warning");
       return;
     }
+    if (options.source === "widget") showToast(`Đã nhận từ widget: ${clean}`, "success");
+    if (options.source === "repeat") showToast(`Lặp lại: ${clean}`, "success");
     stickToBottomRef.current = true;
     setView("chat");
     const pendingId = newId();
@@ -1060,6 +1563,18 @@ function App() {
         buttons: data.buttons,
         status: data.status
       });
+      const statusItems = extractSystemStatusItems(data.cards);
+      if (statusItems.length) setLastStatusItems(statusItems);
+      if (data.status !== "error") {
+        setCommandUsage(rememberCommandUsage(connection.baseUrl, clean));
+      }
+      if (data.requiresConfirmation) {
+        showToast("Cần xác nhận trong app.", "warning");
+      } else if (data.status === "error") {
+        showToast(data.message || "Không xử lý được yêu cầu.", "error");
+      } else if (options.source) {
+        showToast(`Đã gửi: ${clean}`, "success");
+      }
       setConnectionText("Đã kết nối");
     } catch (error) {
       const text = friendlyConnectionError(error);
@@ -1070,10 +1585,20 @@ function App() {
         buttons: [{ label: "Thử lại", command: "__retry__" }]
       });
       setConnectionText("Mất kết nối");
+      showToast(text, "error");
     } finally {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!pendingLaunchCommand) return;
+    setDraft(pendingLaunchCommand);
+    if (!connection || step !== "connected" || busy) return;
+    const command = pendingLaunchCommand;
+    setPendingLaunchCommand("");
+    void sendCommand(command, { source: "widget" });
+  }, [busy, connection, pendingLaunchCommand, step]);
 
   const onSubmitCommand = (event: FormEvent) => {
     event.preventDefault();
@@ -1087,6 +1612,7 @@ function App() {
       { label: "Tạo mật khẩu", icon: KeyRound, command: "tạo mật khẩu trong mmo" },
       { label: "Hash text", icon: Hash, prefix: "hash sha256 ", suffix: " trong mmo" },
       { label: "Trạng thái máy", icon: Cpu, command: "trạng thái máy" },
+      { label: "Trợ giúp", icon: Search, command: "help" },
       { label: "Tệp đã gửi", icon: FolderOpen, view: "files" },
       { label: "Quyền điều khiển", icon: Shield, view: "permissions" },
       { label: "Xóa lịch sử", icon: History, action: "clear-history" }
@@ -1108,7 +1634,7 @@ function App() {
     }
     setView("chat");
     if ("command" in action && action.command) {
-      void sendCommand(action.command);
+      void sendCommand(action.command, { source: "quick" });
       return;
     }
     const selectedText = draft.trim();
@@ -1122,7 +1648,26 @@ function App() {
     }
   };
 
-  const viewTitle = view === "files" ? "Tệp đã gửi" : view === "permissions" ? "Quyền điều khiển" : "Kết quả";
+  const frequentCommands = useMemo(() => commandUsage.slice(0, 6).map((item) => item.command), [commandUsage]);
+  const commandSuggestions = useMemo(
+    () => buildCommandSuggestions(draft, commandUsage, quickActions, macros, pinnedCommands),
+    [commandUsage, draft, macros, pinnedCommands, quickActions]
+  );
+
+  const applyCommandSuggestion = (command: string) => {
+    setDraft(command);
+    setShowQuickActions(false);
+    window.setTimeout(() => inputRef.current?.focus(), 30);
+  };
+
+  const viewTitle =
+    view === "files"
+      ? "Tệp đã gửi"
+      : view === "permissions"
+        ? "Quyền điều khiển"
+        : view === "commands"
+          ? "Lệnh của tôi"
+          : "Kết quả";
 
   const brandIntro = showBrandIntro ? <BrandIntro leaving={brandIntroLeaving} /> : null;
   const discoveryOverlay = discovering && step !== "connected" ? <DiscoveryOverlay /> : null;
@@ -1270,65 +1815,147 @@ function App() {
             onRefresh={loadPermissions}
             onDisconnect={disconnect}
           />
+        ) : view === "commands" ? (
+          <CommandsView
+            macros={macros}
+            pinnedCommands={pinnedCommands}
+            commandUsage={commandUsage}
+            lastCommand={lastCommand}
+            onBack={() => setView("chat")}
+            onSaveMacros={(items) => {
+              setMacros(saveMacros(items));
+              showToast("Đã lưu macro.", "success");
+            }}
+            onSavePinned={(items) => {
+              setPinnedCommands(savePinnedCommands(items));
+              showToast("Đã lưu lệnh ghim.", "success");
+            }}
+            onRun={(command, source = "quick") => void sendCommand(command, { source })}
+          />
         ) : messages.length === 0 ? (
-          <div className="empty-state">
-            <MonitorSmartphone size={42} />
-            <h2>Nhập yêu cầu</h2>
-            <p>ATAssistant sẽ xử lý trên máy tính và trả kết quả về đây.</p>
-          </div>
+          <>
+            <DashboardMini
+              items={lastStatusItems}
+              lastCommand={lastCommand}
+              onRefresh={() => void sendCommand("trạng thái máy", { source: "quick" })}
+              onRepeat={lastCommand ? () => void sendCommand(lastCommand, { source: "repeat" }) : undefined}
+              onRun={(command) => void sendCommand(command, { source: "quick" })}
+            />
+            <div className="empty-state">
+              <MonitorSmartphone size={42} />
+              <h2>Nhập yêu cầu</h2>
+              <p>ATAssistant sẽ xử lý trên máy tính và trả kết quả về đây.</p>
+            </div>
+          </>
         ) : (
-          messages.map((message) => (
-            <article key={message.id} className={`message ${message.role}`}>
-              <div className={`message-bubble ${message.pending ? "pending" : ""}`}>
-                <p className="message-text">{message.text}</p>
-                <div className="message-meta">
-                  {message.pending ? <RefreshCw className="spin" size={12} /> : null}
-                  <span>{message.pending ? "Đang xử lý" : message.time}</span>
-                </div>
-              </div>
-              {message.cards?.map((card, index) => (
-                <ResultCard
-                  key={`${message.id}-${index}`}
-                  card={card}
-                  baseUrl={connection?.baseUrl || baseUrl}
-                  onOpenImage={setImageViewer}
-                  onOpenFile={openRemoteFile}
-                  onDownloadFile={downloadRemoteFile}
-                  onShareFile={shareRemoteFile}
-                />
-              ))}
-              {message.buttons && message.buttons.length > 0 ? (
-                <div className="result-actions">
-                  {message.buttons.map((button) => (
-                    <button
-                      key={`${button.label}-${button.command || button.url}`}
-                      className={button.tone === "danger" ? "danger-button" : "secondary-button"}
-                      onClick={() => {
-                        if (button.url) window.open(button.url, "_blank", "noopener,noreferrer");
-                        else if (button.command) void sendCommand(button.command);
-                      }}
-                    >
-                      {button.label}
-                    </button>
+          <>
+            <DashboardMini
+              items={lastStatusItems}
+              lastCommand={lastCommand}
+              onRefresh={() => void sendCommand("trạng thái máy", { source: "quick" })}
+              onRepeat={lastCommand ? () => void sendCommand(lastCommand, { source: "repeat" }) : undefined}
+              onRun={(command) => void sendCommand(command, { source: "quick" })}
+            />
+            {messages.map((message) => {
+              const hasCards = Boolean(message.cards?.length);
+              const showBubble = message.role === "user" || message.pending || !hasCards;
+              return (
+                <article key={message.id} className={`message ${message.role}`}>
+                  {showBubble ? (
+                    <div className={`message-bubble ${message.pending ? "pending" : ""}`}>
+                      <p className="message-text">{message.text}</p>
+                      <div className="message-meta">
+                        {message.pending ? <RefreshCw className="spin" size={12} /> : null}
+                        <span>{message.pending ? "Đang xử lý" : message.time}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                  {message.cards?.map((card, index) => (
+                    <ResultCard
+                      key={`${message.id}-${index}`}
+                      card={card}
+                      baseUrl={connection?.baseUrl || baseUrl}
+                      onOpenImage={setImageViewer}
+                      onOpenFile={openRemoteFile}
+                      onDownloadFile={downloadRemoteFile}
+                      onShareFile={shareRemoteFile}
+                    />
                   ))}
-                </div>
-              ) : null}
-            </article>
-          ))
+                  {message.buttons && message.buttons.length > 0 ? (
+                    <div className="result-actions">
+                      {message.buttons.map((button) => (
+                        <button
+                          key={`${button.label}-${button.command || button.url}`}
+                          className={button.tone === "danger" ? "danger-button" : "secondary-button"}
+                          onClick={() => {
+                            if (button.url) window.open(button.url, "_blank", "noopener,noreferrer");
+                            else if (button.command) void sendCommand(button.command, { source: "quick" });
+                          }}
+                        >
+                          {button.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </>
         )}
       </section>
 
       {showQuickActions ? (
-        <section className="quick-actions" aria-label="Nút nhanh">
-          {quickActions.map((action) => {
-            const Icon = action.icon;
-            return (
-              <button key={action.label} onClick={() => runQuickAction(action)} disabled={busy}>
-                <Icon size={18} />
-                <span>{action.label}</span>
-              </button>
-            );
-          })}
+        <section className="quick-actions-panel" aria-label="Nút nhanh">
+          <div className="macro-actions" aria-label="Macro một chạm">
+            <span>Macro</span>
+            <div>
+              {macros.map((macro) => (
+                <button
+                  key={`${macro.label}-${macro.command}`}
+                  type="button"
+                  className={isRiskyCommand(macro.command) ? "risky" : ""}
+                  onClick={() => void sendCommand(macro.command, { source: "macro" })}
+                  disabled={busy}
+                >
+                  {macro.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {frequentCommands.length > 0 ? (
+            <div className="frequent-commands" aria-label="Lệnh thường dùng">
+              <span>Thường dùng</span>
+              <div>
+                {frequentCommands.map((command) => (
+                  <button key={command} type="button" onClick={() => void sendCommand(command, { source: "quick" })} disabled={busy}>
+                    {command}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className="quick-actions">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <button key={action.label} onClick={() => runQuickAction(action)} disabled={busy}>
+                  <Icon size={18} />
+                  <span>{action.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {commandSuggestions.length > 0 ? (
+        <section className="command-suggestions" aria-label="Gợi ý hoàn thiện câu lệnh">
+          {commandSuggestions.map((command) => (
+            <button key={command} type="button" onClick={() => applyCommandSuggestion(command)}>
+              <ChevronRight size={15} />
+              <span>{command}</span>
+            </button>
+          ))}
         </section>
       ) : null}
 
@@ -1365,7 +1992,10 @@ function App() {
         <textarea
           ref={inputRef}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (event.target.value.trim()) setShowQuickActions(false);
+          }}
           placeholder="Nhập yêu cầu"
           rows={1}
         />
@@ -1374,6 +2004,8 @@ function App() {
           <span>Gửi</span>
         </button>
       </form>
+
+      {toast ? <div className={`toast ${toast.tone}`} role="status">{toast.text}</div> : null}
 
       {imageViewer ? (
         <ImageViewer
@@ -1404,6 +2036,210 @@ function DiscoveryOverlay() {
       <div className="discovery-overlay__image" />
       <div className="discovery-overlay__shade" />
       <div className="discovery-overlay__label">Đang tìm máy tính</div>
+    </div>
+  );
+}
+
+function DashboardMini({
+  items,
+  lastCommand,
+  onRefresh,
+  onRepeat,
+  onRun
+}: {
+  items: SystemStatusItem[];
+  lastCommand: string;
+  onRefresh: () => void;
+  onRepeat?: () => void;
+  onRun: (command: string) => void;
+}) {
+  const visibleItems = items.length
+    ? items.slice(0, 4)
+    : [
+        { label: "CPU", value: "--" },
+        { label: "RAM", value: "--" },
+        { label: "Pin", value: "--" },
+        { label: "Đang dùng", value: "--" }
+      ];
+  return (
+    <section className="dashboard-mini" aria-label="Trạng thái nhanh">
+      <div className="dashboard-top">
+        <div>
+          <span>Dashboard</span>
+          <strong>{lastCommand ? `Lệnh gần nhất: ${lastCommand}` : "Sẵn sàng nhận lệnh"}</strong>
+        </div>
+        <button type="button" className="icon-button" onClick={onRefresh} aria-label="Cập nhật trạng thái">
+          <RefreshCw size={17} />
+        </button>
+      </div>
+      <div className="dashboard-metrics">
+        {visibleItems.map((item) => (
+          <div className="dashboard-metric" key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="dashboard-actions">
+        {onRepeat ? (
+          <button type="button" onClick={onRepeat}>
+            <Repeat2 size={15} />
+            Lặp lại
+          </button>
+        ) : null}
+        <button type="button" onClick={() => onRun("chụp màn hình")}>Chụp màn hình</button>
+        <button type="button" onClick={() => onRun("thả hết phím")}>Thả hết phím</button>
+      </div>
+    </section>
+  );
+}
+
+function CommandsView({
+  macros,
+  pinnedCommands,
+  commandUsage,
+  lastCommand,
+  onBack,
+  onSaveMacros,
+  onSavePinned,
+  onRun
+}: {
+  macros: MacroAction[];
+  pinnedCommands: string[];
+  commandUsage: CommandUsage[];
+  lastCommand: string;
+  onBack: () => void;
+  onSaveMacros: (items: MacroAction[]) => void;
+  onSavePinned: (items: string[]) => void;
+  onRun: (command: string, source?: "macro" | "quick" | "repeat") => void;
+}) {
+  const [macroDrafts, setMacroDrafts] = useState<MacroAction[]>(macros);
+  const [pinnedDraft, setPinnedDraft] = useState("");
+  const [idleMinutes, setIdleMinutes] = useState("45");
+  const [idleStart, setIdleStart] = useState("23");
+  const [idleEnd, setIdleEnd] = useState("6");
+
+  useEffect(() => setMacroDrafts(macros), [macros]);
+
+  const updateMacro = (index: number, patch: Partial<MacroAction>) => {
+    setMacroDrafts((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+  };
+  const addPinned = () => {
+    if (!pinnedDraft.trim()) return;
+    onSavePinned([pinnedDraft, ...pinnedCommands]);
+    setPinnedDraft("");
+  };
+  const idleCommand = `bật chế độ ngủ quên sau ${idleMinutes || "45"} phút từ ${idleStart || "23"} đến ${idleEnd || "6"}`;
+  const widgetCommands = ["tắt máy sau 30 phút", "chụp màn hình", "trạng thái máy"];
+
+  return (
+    <div className="commands-panel">
+      <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Quay lại
+        </button>
+        <button type="button" className="secondary-button" onClick={() => onRun("help", "quick")}>
+          <Search size={16} />
+          Help
+        </button>
+      </div>
+
+      <section className="command-section">
+        <div className="section-heading">
+          <h2>Macro</h2>
+          <button type="button" className="secondary-button compact-button" onClick={() => onSaveMacros(macroDrafts)}>
+            <Save size={15} />
+            Lưu
+          </button>
+        </div>
+        <div className="macro-editor">
+          {macroDrafts.map((macro, index) => (
+            <div className="macro-editor-row" key={`${index}-${macro.label}`}>
+              <input value={macro.label} onChange={(event) => updateMacro(index, { label: event.target.value })} />
+              <input value={macro.command} onChange={(event) => updateMacro(index, { command: event.target.value })} />
+              <button type="button" onClick={() => onRun(macro.command, "macro")} className={isRiskyCommand(macro.command) ? "danger-soft-button" : "secondary-button"}>
+                Gửi
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="command-section">
+        <div className="section-heading">
+          <h2>Lệnh ghim</h2>
+        </div>
+        <div className="pinned-list">
+          {pinnedCommands.map((command) => (
+            <button key={command} type="button" onClick={() => onRun(command, "quick")}>{command}</button>
+          ))}
+        </div>
+        <div className="inline-editor">
+          <input value={pinnedDraft} onChange={(event) => setPinnedDraft(event.target.value)} placeholder="Ghim lệnh mới" />
+          <button type="button" className="secondary-button" onClick={addPinned}>Ghim</button>
+          <button type="button" className="danger-soft-button" onClick={() => onSavePinned(DEFAULT_PINNED_COMMANDS)}>Đặt lại</button>
+        </div>
+      </section>
+
+      <section className="command-section">
+        <div className="section-heading">
+          <h2>Lệnh gần đây</h2>
+          {lastCommand ? (
+            <button type="button" className="secondary-button compact-button" onClick={() => onRun(lastCommand, "repeat")}>
+              <Repeat2 size={15} />
+              Lặp lại
+            </button>
+          ) : null}
+        </div>
+        <div className="recent-command-list">
+          {commandUsage.slice(0, 10).map((item) => (
+            <button key={item.command} type="button" onClick={() => onRun(item.command, "quick")}>
+              <span>{item.command}</span>
+              <small>{item.count} lần</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="command-section">
+        <div className="section-heading">
+          <h2>Ngủ quên</h2>
+        </div>
+        <div className="lazy-guard-grid">
+          <label>
+            Sau
+            <input value={idleMinutes} onChange={(event) => setIdleMinutes(event.target.value.replace(/\D/g, "").slice(0, 3))} inputMode="numeric" />
+          </label>
+          <label>
+            Từ
+            <input value={idleStart} onChange={(event) => setIdleStart(event.target.value.replace(/\D/g, "").slice(0, 2))} inputMode="numeric" />
+          </label>
+          <label>
+            Đến
+            <input value={idleEnd} onChange={(event) => setIdleEnd(event.target.value.replace(/\D/g, "").slice(0, 2))} inputMode="numeric" />
+          </label>
+        </div>
+        <div className="dashboard-actions">
+          <button type="button" onClick={() => onRun(idleCommand, "quick")}>Bật</button>
+          <button type="button" onClick={() => onRun("trạng thái chế độ ngủ quên", "quick")}>Trạng thái</button>
+          <button type="button" onClick={() => onRun("tắt chế độ ngủ quên", "quick")}>Tắt</button>
+        </div>
+      </section>
+
+      <section className="command-section">
+        <div className="section-heading">
+          <h2>Widget Android</h2>
+        </div>
+        <div className="widget-command-list">
+          {widgetCommands.map((command) => (
+            <div key={command}>
+              <span>{command}</span>
+              <code>{commandDeepLink(command)}</code>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

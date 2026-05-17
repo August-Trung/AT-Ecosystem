@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FFF7F8FF">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="18dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_config_title"
+            android:textColor="#151321"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/widget_config_subtitle"
+            android:textColor="#667085"
+            android:textSize="14sp" />
+
+        <LinearLayout
+            style="@style/WidgetConfigBlock"
+            android:layout_marginTop="16dp">
+
+            <EditText
+                android:id="@+id/widget_label_1"
+                style="@style/WidgetConfigInput"
+                android:hint="@string/widget_label_hint" />
+
+            <EditText
+                android:id="@+id/widget_command_text_1"
+                style="@style/WidgetConfigInput"
+                android:layout_marginTop="8dp"
+                android:hint="@string/widget_command_hint" />
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/WidgetConfigBlock"
+            android:layout_marginTop="10dp">
+
+            <EditText
+                android:id="@+id/widget_label_2"
+                style="@style/WidgetConfigInput"
+                android:hint="@string/widget_label_hint" />
+
+            <EditText
+                android:id="@+id/widget_command_text_2"
+                style="@style/WidgetConfigInput"
+                android:layout_marginTop="8dp"
+                android:hint="@string/widget_command_hint" />
+        </LinearLayout>
+
+        <LinearLayout
+            style="@style/WidgetConfigBlock"
+            android:layout_marginTop="10dp">
+
+            <EditText
+                android:id="@+id/widget_label_3"
+                style="@style/WidgetConfigInput"
+                android:hint="@string/widget_label_hint" />
+
+            <EditText
+                android:id="@+id/widget_command_text_3"
+                style="@style/WidgetConfigInput"
+                android:layout_marginTop="8dp"
+                android:hint="@string/widget_command_hint" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/widget_config_save"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:layout_marginTop="16dp"
+            android:backgroundTint="#FFFF5A3D"
+            android:text="@string/widget_config_save"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFFFF"
+            android:textStyle="bold" />
+    </LinearLayout>
+</ScrollView>
