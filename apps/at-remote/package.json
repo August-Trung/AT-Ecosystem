@@ -10,6 +10,8 @@
     "android:open": "cap open android",
     "android:build": "npm run android:sync && cd android && gradlew.bat assembleDebug",
     "android:release": "npm run android:sync && cd android && gradlew.bat assembleRelease",
+    "android:release:flow": "powershell -ExecutionPolicy Bypass -File ./scripts/build-android-release.ps1",
+    "version:android": "node ./scripts/bump-android-version.mjs",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

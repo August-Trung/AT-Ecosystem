@@ -17,6 +17,8 @@ __pycache__/
 # Build outputs
 dist/
 build/
+apps/at-assistant/releases/
+apps/at-remote/releases/
 .next/
 .nuxt/
 .output/

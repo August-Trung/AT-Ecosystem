@@ -81,6 +81,7 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self.status_var = ctk.StringVar(value="")
         self.code_var = ctk.StringVar(value="")
         self.url_var = ctk.StringVar(value="")
+        self.tailscale_url_var = ctk.StringVar(value="")
 
         shell = ctk.CTkFrame(self, fg_color=ui["BG_PRIMARY"], corner_radius=0)
         shell.pack(fill="both", expand=True, padx=18, pady=18)
@@ -213,9 +214,17 @@ class MobileRemoteDialog(ctk.CTkToplevel):
             anchor="w",
             wraplength=560,
         ).grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        ctk.CTkLabel(
+            pair_box,
+            textvariable=self.tailscale_url_var,
+            font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"),
+            text_color=ui["ACCENT_BLUE"],
+            anchor="w",
+            wraplength=560,
+        ).grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 16))
 
         qr_shell = ctk.CTkFrame(pair_box, fg_color="#ffffff", corner_radius=8)
-        qr_shell.grid(row=0, column=1, rowspan=3, sticky="e", padx=16, pady=16)
+        qr_shell.grid(row=0, column=1, rowspan=4, sticky="e", padx=16, pady=16)
         self.qr_label = ctk.CTkLabel(qr_shell, text="")
         self.qr_label.pack(padx=10, pady=10)
 
@@ -319,7 +328,14 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self._refresh()
 
     def _open_remote_url(self) -> None:
-        urls = self._bridge.snapshot().get("pairingUrls") or self._bridge.snapshot().get("urls") or []
+        snapshot = self._bridge.snapshot()
+        urls = (
+            snapshot.get("tailscalePairingUrls")
+            or snapshot.get("tailscaleUrls")
+            or snapshot.get("pairingUrls")
+            or snapshot.get("urls")
+            or []
+        )
         if urls:
             webbrowser.open(str(urls[0]))
 
@@ -363,14 +379,23 @@ class MobileRemoteDialog(ctk.CTkToplevel):
         self.enabled_var.set(running)
         self.code_var.set(str(snapshot.get("pairCode") or "------") if running else "------")
         urls = list(snapshot.get("pairingUrls") or snapshot.get("urls") or [])
+        tailscale_urls = list(snapshot.get("tailscalePairingUrls") or snapshot.get("tailscaleUrls") or [])
         deep_links = list(snapshot.get("deepLinkUrls") or [])
-        self.url_var.set(str(urls[0]) if urls else "Chưa có địa chỉ. Hãy bật kết nối điện thoại.")
+        tailscale_deep_links = list(snapshot.get("tailscaleDeepLinkUrls") or [])
+        self.url_var.set(
+            f"WiFi/LAN: {urls[0]}" if urls else "Chưa có địa chỉ. Hãy bật kết nối điện thoại."
+        )
+        self.tailscale_url_var.set(
+            f"Tailscale: {tailscale_urls[0]}" if tailscale_urls else "Tailscale: chưa phát hiện trên máy tính"
+        )
         if running:
             ready = "AT Remote đã sẵn sàng." if snapshot.get("staticAppReady") else "Dùng app Android và nhập địa chỉ bên dưới."
-            self.status_var.set(f"{ready} Điện thoại và máy tính cần cùng WiFi.")
+            self.status_var.set(
+                f"{ready} Dùng cùng WiFi hoặc bật Tailscale trên cả điện thoại và máy tính."
+            )
         else:
             self.status_var.set("Đang tắt. Bật kết nối điện thoại để ghép nối thiết bị.")
-        qr_url = str((deep_links or urls or [""])[0])
+        qr_url = str((tailscale_deep_links or deep_links or tailscale_urls or urls or [""])[0])
         if qr_url != self._last_qr_url:
             self._last_qr_url = qr_url
             self._render_qr(qr_url)

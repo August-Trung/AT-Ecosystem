@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import base64
+import socket
+from types import SimpleNamespace
 
 import requests
 
 from src.core.result import ActionResult
+from src.integrations import mobile_remote as mobile_remote_module
 from src.integrations.mobile_remote import MobileRemoteBridge, MobileRemoteSettingsStore, mobile_payload_from_result
 
 
@@ -25,6 +28,8 @@ class _FakeEngine:
             )
         if command == "tat may":
             return ActionResult.need_confirm("Bạn có chắc muốn tắt máy?", "system_power", {"action": "shutdown"})
+        if command == "đi ngủ":
+            return ActionResult.ok("Đã bật preset đi ngủ.", scheduled_power={"action": "shutdown"})
         return ActionResult.ok("SHA256", algorithm="sha256", hex="abc123", base64="YWJjMTIz")
 
 
@@ -119,6 +124,30 @@ def test_mobile_remote_settings_never_bind_loopback_for_lan(tmp_path, monkeypatc
     assert store.load()["host"] == "0.0.0.0"
 
 
+def test_mobile_remote_snapshot_exposes_tailscale_urls(tmp_path, monkeypatch):
+    if mobile_remote_module.psutil is None:
+        return
+
+    monkeypatch.setattr(
+        mobile_remote_module.psutil,
+        "net_if_addrs",
+        lambda: {
+            "Tailscale": [SimpleNamespace(family=socket.AF_INET, address="100.101.102.103")],
+            "Wi-Fi": [SimpleNamespace(family=socket.AF_INET, address="192.168.1.23")],
+        },
+    )
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        snapshot = bridge.snapshot()
+        assert any(item["kind"] == "tailscale" and item["address"] == "100.101.102.103" for item in snapshot["networkAddresses"])
+        assert f"http://100.101.102.103:{bridge.port}" in snapshot["tailscaleUrls"]
+        assert f"http://100.101.102.103:{bridge.port}/?code={bridge.pair_code}" in snapshot["tailscalePairingUrls"]
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path, monkeypatch):
     engine = _FakeEngine()
     events: list[tuple[str, dict]] = []
@@ -143,6 +172,71 @@ def test_mobile_remote_accepts_optional_at_prefix_and_emits_chat_events(tmp_path
         assert received[-1]["command"] == "trạng thái máy"
         assert results[-1]["status"] == "success"
         assert results[-1]["result"].message == "Trạng thái máy"
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_help_is_app_specific_and_skips_engine(tmp_path, monkeypatch):
+    engine = _FakeEngine()
+    bridge = MobileRemoteBridge(engine, settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = bridge.handle_command(str(auth_key), "help")
+
+        assert payload["status"] == "success"
+        assert payload["cards"][0]["title"] == "Trợ giúp AT Remote"
+        assert "Không cần gõ /at" in payload["message"]
+        assert engine.calls == []
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_macro_result_has_short_card_and_next_buttons(tmp_path, monkeypatch):
+    engine = _FakeEngine()
+    bridge = MobileRemoteBridge(engine, settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = bridge.handle_command(str(auth_key), "đi ngủ")
+
+        assert payload["status"] == "success"
+        assert payload["cards"][0]["title"] == "Đã bật Đi ngủ"
+        assert payload["cards"][0]["message"] == "Preset đi ngủ đã chạy trên máy tính."
+        assert any(button["command"] == "hủy hẹn giờ tắt máy" for button in payload["buttons"])
+        assert engine.calls == [("đi ngủ", "mobile")]
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_share_text_sets_desktop_clipboard(tmp_path, monkeypatch):
+    called: list[tuple[str, str]] = []
+
+    def fake_clipboard(action: str, text: str = "") -> ActionResult:
+        called.append((action, text))
+        return ActionResult.ok("Đã đưa nội dung vào clipboard máy.", clipboard_text=text)
+
+    monkeypatch.setattr(mobile_remote_module.executor, "clipboard_bridge", fake_clipboard)
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        pair = bridge.request_pair("Điện thoại của Trung", bridge.pair_code, client_host="192.168.1.50")
+        bridge.approve_pair_request(pair["requestId"])
+        auth_key = bridge.pair_status(pair["requestId"])["authKey"]
+
+        payload = bridge.handle_share(str(auth_key), {"text": "https://example.com"})
+
+        assert payload["status"] == "success"
+        assert payload["cards"][0]["title"] == "Đã gửi sang máy"
+        assert payload["message"] == "Nội dung đã nằm trong clipboard máy tính."
+        assert payload["buttons"][0]["command"] == "mở https://example.com"
+        assert called == [("set", "https://example.com")]
     finally:
         bridge.stop()
 
@@ -277,7 +371,7 @@ def test_mobile_remote_upload_without_command_returns_one_file_card(tmp_path, mo
         ).json()
 
         file_cards = [card for card in payload["cards"] if card.get("type") == "file"]
-        assert payload["message"] == "Tệp đã sẵn sàng."
+        assert payload["message"] == "Tệp đã được lưu trên máy tính."
         assert len(file_cards) == 1
         assert file_cards[0]["title"] == "Tệp đã gửi"
         assert len(payload["files"]) == 1

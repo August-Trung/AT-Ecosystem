@@ -22,6 +22,18 @@ Trên điện thoại:
 
 QR dùng deep link `atremote://pair?...` để mở thẳng app Android nếu đã cài. URL HTTP bên dưới QR vẫn dùng được cho PWA/browser khi `apps/at-remote` đã được build.
 
+## Dùng Từ Xa Qua Tailscale
+
+Tailscale là cách dùng từ xa khuyến nghị cho bản này vì không cần mở port router.
+
+1. Cài Tailscale trên máy tính và điện thoại.
+2. Đăng nhập cùng một tailnet.
+3. Mở ATAssistant, bật `Kết nối điện thoại`.
+4. Trong cửa sổ kết nối, dùng dòng `Tailscale: http://100.x.x.x:8765`.
+5. Trên điện thoại, quét QR hoặc nhập đúng địa chỉ Tailscale và mã kết nối.
+
+Nếu app không thấy máy tính khi bấm `Tìm máy tính`, hãy nhập địa chỉ Tailscale đang hiện trong ATAssistant. Tailscale không dùng quét subnet như WiFi, nên app sẽ thử đúng địa chỉ đã lưu/đang nhập trước rồi mới quét WiFi.
+
 ## Web/PWA Development
 
 ```powershell
@@ -95,6 +107,28 @@ Release APK nằm ở:
 
 ```text
 apps/at-remote/android/app/build/outputs/apk/release/app-release.apk
+```
+
+## Release/update flow
+
+Bump version cho APK:
+
+```powershell
+cd "D:\Study\Projects\AT Ecosystem\apps\at-remote"
+npm run version:android -- --version 1.0.1 --code 2
+```
+
+Build release và copy APK ra thư mục `releases/` kèm metadata `latest.json`:
+
+```powershell
+npm run android:release:flow
+```
+
+Output:
+
+```text
+apps/at-remote/releases/AT-Remote-v<version>-<code>-<timestamp>.apk
+apps/at-remote/releases/latest.json
 ```
 
 ## Tệp Và Quyền
