@@ -1,25 +1,34 @@
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor, CapacitorHttp, registerPlugin } from "@capacitor/core";
-import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import type { LocalNotificationSchema } from "@capacitor/local-notifications";
 import { Share } from "@capacitor/share";
 import {
   BatteryCharging,
+  Banknote,
+  Bell,
   Check,
   ChevronRight,
   Clipboard,
   Cpu,
   Download,
+  Droplets,
   FileText,
   FolderOpen,
   Hash,
   History,
+  Home,
   KeyRound,
   Laptop,
   Mail,
   Menu,
+  MessageCircle,
   MonitorSmartphone,
   Paperclip,
+  Plus,
   QrCode,
+  ReceiptText,
   RefreshCw,
   Repeat2,
   RotateCcw,
@@ -33,6 +42,7 @@ import {
   Trash2,
   WifiOff,
   X,
+  Zap,
   ZoomIn,
   ZoomOut
 } from "lucide-react";
@@ -40,7 +50,9 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 
 type ConnectionStep = "checking" | "connect" | "pending" | "connected";
 type MessageRole = "user" | "assistant";
-type AppView = "chat" | "files" | "permissions" | "commands";
+type AppView = "home" | "chat" | "files" | "permissions" | "commands" | "expenses";
+type BillKind = "rent" | "electricity" | "water" | "other";
+type BillMode = "fixed" | "metered";
 
 type MobileButton = {
   label: string;
@@ -135,6 +147,36 @@ type MacroAction = {
   command: string;
 };
 
+type LivingExpenseHistory = {
+  month: string;
+  paidAt: string;
+  amount: number;
+  unitPrice: number;
+  previousReading: number;
+  currentReading: number;
+  usage: number;
+  note?: string;
+};
+
+type LivingExpense = {
+  id: string;
+  kind: BillKind;
+  label: string;
+  mode: BillMode;
+  dueDay: number;
+  reminderEnabled: boolean;
+  remindBeforeDays: number;
+  overdueReminder: boolean;
+  amount: number;
+  unitPrice: number;
+  previousReading: number;
+  currentReading: number;
+  manualTotal: number;
+  paidMonth?: string;
+  note?: string;
+  history: LivingExpenseHistory[];
+};
+
 type ToastState = {
   text: string;
   tone: "success" | "warning" | "error";
@@ -198,6 +240,9 @@ const CHAT_HISTORY_PREFIX = "atRemoteChatHistory:";
 const COMMAND_USAGE_PREFIX = "atRemoteCommandUsage:";
 const MACRO_STORAGE_KEY = "atRemoteMacros";
 const PINNED_COMMANDS_KEY = "atRemotePinnedCommands";
+const LIVING_EXPENSES_KEY = "atRemoteLivingExpensesV1";
+const LIVING_EXPENSES_DUE_NOTICE_KEY = "atRemoteExpenseDueNotice:";
+const EXPENSE_NOTIFICATION_ID_BASE = 730000;
 const MAX_STORED_MESSAGES = 120;
 const MAX_STORED_COMMANDS = 36;
 const MAX_COMMAND_SUGGESTIONS = 6;
@@ -285,6 +330,57 @@ const DEFAULT_MACRO_ACTIONS: MacroAction[] = [
 ];
 
 const DEFAULT_PINNED_COMMANDS = ["trạng thái máy", "chụp màn hình", "chuyển bài youtube", "thả hết phím"];
+
+const DEFAULT_LIVING_EXPENSES: LivingExpense[] = [
+  {
+    id: "rent",
+    kind: "rent",
+    label: "Tiền trọ",
+    mode: "fixed",
+    dueDay: 5,
+    reminderEnabled: true,
+    remindBeforeDays: 1,
+    overdueReminder: true,
+    amount: 0,
+    unitPrice: 0,
+    previousReading: 0,
+    currentReading: 0,
+    manualTotal: 0,
+    history: []
+  },
+  {
+    id: "electricity",
+    kind: "electricity",
+    label: "Tiền điện",
+    mode: "metered",
+    dueDay: 5,
+    reminderEnabled: true,
+    remindBeforeDays: 1,
+    overdueReminder: true,
+    amount: 0,
+    unitPrice: 0,
+    previousReading: 0,
+    currentReading: 0,
+    manualTotal: 0,
+    history: []
+  },
+  {
+    id: "water",
+    kind: "water",
+    label: "Tiền nước",
+    mode: "metered",
+    dueDay: 5,
+    reminderEnabled: true,
+    remindBeforeDays: 1,
+    overdueReminder: true,
+    amount: 0,
+    unitPrice: 0,
+    previousReading: 0,
+    currentReading: 0,
+    manualTotal: 0,
+    history: []
+  }
+];
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -597,6 +693,334 @@ const savePinnedCommands = (items: string[]) => {
   return clean;
 };
 
+const cleanNumber = (value: unknown) => {
+  const next = Number(String(value ?? "").replace(/,/g, "."));
+  return Number.isFinite(next) && next > 0 ? next : 0;
+};
+
+const clampDueDay = (value: unknown) => Math.min(31, Math.max(1, Math.round(cleanNumber(value) || 1)));
+
+const clampReminderDays = (value: unknown) => Math.min(14, Math.max(0, Math.round(cleanNumber(value))));
+
+const currentMonthKey = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const currentMonthLabel = () => new Date().toLocaleDateString("vi-VN", { month: "long", year: "numeric" });
+
+const shortDateLabel = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+};
+
+const monthLabel = (month: string) => {
+  const [year, rawMonth] = String(month || "").split("-").map((item) => Number(item));
+  if (!year || !rawMonth) return month || "";
+  return new Date(year, rawMonth - 1, 1).toLocaleDateString("vi-VN", { month: "long", year: "numeric" });
+};
+
+const numberLabel = (value: number) =>
+  new Intl.NumberFormat("vi-VN", {
+    maximumFractionDigits: 2
+  }).format(Math.max(0, Number(value || 0)));
+
+const moneyLabel = (value: number) =>
+  new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+    maximumFractionDigits: 0
+  }).format(Math.max(0, Math.round(value || 0)));
+
+const billKind = (value: unknown): BillKind =>
+  value === "rent" || value === "electricity" || value === "water" || value === "other" ? value : "other";
+
+const billMode = (value: unknown): BillMode => (value === "metered" ? "metered" : "fixed");
+
+const normalizeExpenseHistory = (items: unknown): LivingExpenseHistory[] => {
+  if (!Array.isArray(items)) return [];
+  return items
+    .flatMap((item) => {
+      const value = item as Partial<LivingExpenseHistory>;
+      const month = String(value.month || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(month)) return [];
+      return [{
+        month,
+        paidAt: String(value.paidAt || ""),
+        amount: cleanNumber(value.amount),
+        unitPrice: cleanNumber(value.unitPrice),
+        previousReading: cleanNumber(value.previousReading),
+        currentReading: cleanNumber(value.currentReading),
+        usage: cleanNumber(value.usage),
+        note: String(value.note || "").trim()
+      }];
+    })
+    .sort((left, right) => right.month.localeCompare(left.month))
+    .slice(0, 24);
+};
+
+const normalizeLivingExpense = (item: Partial<LivingExpense>, fallback?: LivingExpense): LivingExpense => ({
+  id: String(item.id || fallback?.id || "").trim(),
+  kind: billKind(item.kind || fallback?.kind),
+  label: String(item.label || fallback?.label || "Khoản khác").trim(),
+  mode: billMode(item.mode || fallback?.mode),
+  dueDay: clampDueDay(item.dueDay ?? fallback?.dueDay ?? 5),
+  reminderEnabled: typeof item.reminderEnabled === "boolean" ? item.reminderEnabled : fallback?.reminderEnabled ?? true,
+  remindBeforeDays: clampReminderDays(item.remindBeforeDays ?? fallback?.remindBeforeDays ?? 1),
+  overdueReminder: typeof item.overdueReminder === "boolean" ? item.overdueReminder : fallback?.overdueReminder ?? true,
+  amount: cleanNumber(item.amount ?? fallback?.amount),
+  unitPrice: cleanNumber(item.unitPrice ?? fallback?.unitPrice),
+  previousReading: cleanNumber(item.previousReading ?? fallback?.previousReading),
+  currentReading: cleanNumber(item.currentReading ?? fallback?.currentReading),
+  manualTotal: cleanNumber(item.manualTotal ?? fallback?.manualTotal),
+  paidMonth: typeof item.paidMonth === "string" ? item.paidMonth : fallback?.paidMonth,
+  note: String(item.note || fallback?.note || "").trim(),
+  history: normalizeExpenseHistory(item.history || fallback?.history)
+});
+
+const normalizeLivingExpenses = (items: Partial<LivingExpense>[]) => {
+  const source = Array.isArray(items) ? items : [];
+  const sourceById = new Map(source.map((item) => [String(item.id || "").trim(), item]));
+  const defaultIds = new Set(DEFAULT_LIVING_EXPENSES.map((item) => item.id));
+  const defaults = DEFAULT_LIVING_EXPENSES.map((fallback) => normalizeLivingExpense(sourceById.get(fallback.id) || fallback, fallback));
+  const custom = source
+    .filter((item) => {
+      const id = String(item.id || "").trim();
+      return id && !defaultIds.has(id);
+    })
+    .map((item) => normalizeLivingExpense(item))
+    .filter((item) => item.id && item.label)
+    .slice(0, 9);
+  return [...defaults, ...custom];
+};
+
+const readLivingExpenses = (): LivingExpense[] => {
+  try {
+    const raw = localStorage.getItem(LIVING_EXPENSES_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Partial<LivingExpense>[]) : [];
+    return normalizeLivingExpenses(parsed.length ? parsed : DEFAULT_LIVING_EXPENSES);
+  } catch {
+    return normalizeLivingExpenses(DEFAULT_LIVING_EXPENSES);
+  }
+};
+
+const saveLivingExpenses = (items: Partial<LivingExpense>[]) => {
+  const clean = normalizeLivingExpenses(items);
+  localStorage.setItem(LIVING_EXPENSES_KEY, JSON.stringify(clean));
+  return clean;
+};
+
+const parseLivingExpenseBackup = (content: string) => {
+  const parsed = JSON.parse(content) as { expenses?: Partial<LivingExpense>[] } | Partial<LivingExpense>[];
+  const items = Array.isArray(parsed) ? parsed : parsed.expenses;
+  if (!Array.isArray(items) || !items.length) throw new Error("Invalid living expense backup");
+  return normalizeLivingExpenses(items);
+};
+
+const expenseUsage = (expense: LivingExpense) =>
+  Math.max(0, cleanNumber(expense.currentReading) - cleanNumber(expense.previousReading));
+
+const expenseTotal = (expense: LivingExpense) =>
+  expense.mode === "metered" ? expenseUsage(expense) * cleanNumber(expense.unitPrice) : cleanNumber(expense.amount);
+
+const isExpensePaid = (expense: LivingExpense) => expense.paidMonth === currentMonthKey();
+
+const currentExpenseRecord = (expense: LivingExpense) => expense.history.find((item) => item.month === currentMonthKey());
+
+const expenseMonthTotal = (expense: LivingExpense) => {
+  const record = currentExpenseRecord(expense);
+  return record && isExpensePaid(expense) ? record.amount : expenseTotal(expense);
+};
+
+const canCloseExpense = (expense: LivingExpense) => {
+  if (isExpensePaid(expense)) return true;
+  if (expense.mode === "metered") return cleanNumber(expense.currentReading) > cleanNumber(expense.previousReading) && cleanNumber(expense.unitPrice) > 0;
+  return cleanNumber(expense.amount) > 0;
+};
+
+const closeExpenseForCurrentMonth = (expense: LivingExpense): LivingExpense => {
+  const month = currentMonthKey();
+  const usage = expense.mode === "metered" ? expenseUsage(expense) : 0;
+  const currentReading = expense.mode === "metered" ? cleanNumber(expense.currentReading) : 0;
+  const record: LivingExpenseHistory = {
+    month,
+    paidAt: new Date().toISOString(),
+    amount: expenseTotal(expense),
+    unitPrice: cleanNumber(expense.unitPrice),
+    previousReading: expense.mode === "metered" ? cleanNumber(expense.previousReading) : 0,
+    currentReading,
+    usage,
+    note: expense.note
+  };
+  const history = [record, ...expense.history.filter((item) => item.month !== month)].slice(0, 24);
+  return {
+    ...expense,
+    paidMonth: month,
+    previousReading: expense.mode === "metered" ? currentReading : expense.previousReading,
+    currentReading: 0,
+    manualTotal: 0,
+    note: "",
+    history
+  };
+};
+
+const reopenExpenseForCurrentMonth = (expense: LivingExpense): LivingExpense => {
+  const currentRecord = expense.history.find((item) => item.month === currentMonthKey());
+  return {
+    ...expense,
+    paidMonth: "",
+    previousReading: currentRecord && expense.mode === "metered" ? currentRecord.previousReading : expense.previousReading,
+    currentReading: currentRecord && expense.mode === "metered" ? currentRecord.currentReading : expense.currentReading,
+    history: expense.history.filter((item) => item.month !== currentMonthKey())
+  };
+};
+
+type ExpenseNotificationSlot = "before" | "due" | "overdue";
+
+const EXPENSE_NOTIFICATION_SLOT_OFFSETS: Record<ExpenseNotificationSlot, number> = {
+  before: 1,
+  due: 2,
+  overdue: 3
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const expenseNotificationId = (expense: LivingExpense, slot: ExpenseNotificationSlot) =>
+  EXPENSE_NOTIFICATION_ID_BASE +
+  Array.from(expense.id).reduce((sum, char) => sum + char.charCodeAt(0), 0) * 10 +
+  EXPENSE_NOTIFICATION_SLOT_OFFSETS[slot];
+
+const expenseNotificationDescriptors = (expenses: LivingExpense[]) =>
+  expenses.flatMap((expense) =>
+    (Object.keys(EXPENSE_NOTIFICATION_SLOT_OFFSETS) as ExpenseNotificationSlot[]).map((slot) => ({
+      id: expenseNotificationId(expense, slot)
+    }))
+  );
+
+const expenseDueDate = (expense: LivingExpense, monthOffset = 0, hour = 9) => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + monthOffset;
+  const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(clampDueDay(expense.dueDay), lastDayOfMonth), hour, 0, 0, 0);
+};
+
+const nextOverdueReminderDate = () => {
+  const now = new Date();
+  const reminder = new Date(now);
+  reminder.setHours(9, 0, 0, 0);
+  if (reminder.getTime() <= now.getTime()) reminder.setDate(reminder.getDate() + 1);
+  return reminder;
+};
+
+const previousExpenseRecord = (expense: LivingExpense) =>
+  expense.history.find((record) => record.month !== currentMonthKey());
+
+const expenseTotalDelta = (expense: LivingExpense) => {
+  const record = previousExpenseRecord(expense);
+  return record ? expenseMonthTotal(expense) - record.amount : 0;
+};
+
+const averageExpenseAmount = (expense: LivingExpense) => {
+  const records = expense.history.slice(0, 6);
+  if (!records.length) return 0;
+  return records.reduce((sum, record) => sum + cleanNumber(record.amount), 0) / records.length;
+};
+
+const summarizeLivingExpenses = (expenses: LivingExpense[]) =>
+  expenses.reduce(
+    (summary, expense) => {
+      const monthTotal = expenseMonthTotal(expense);
+      summary.total += monthTotal;
+      if (isExpensePaid(expense)) summary.paid += monthTotal;
+      else summary.unpaid += monthTotal;
+      return summary;
+    },
+    { total: 0, paid: 0, unpaid: 0 }
+  );
+
+const daysUntilDue = (dueDay: number) => {
+  const now = new Date();
+  const due = expenseDueDate({ dueDay } as LivingExpense, 0, 23);
+  due.setMinutes(59, 59, 999);
+  return Math.ceil((due.getTime() - now.getTime()) / 86400000);
+};
+
+const expenseStatusText = (expense: LivingExpense) => {
+  if (isExpensePaid(expense)) return "Đã đóng";
+  const dueOffset = daysUntilDue(expense.dueDay);
+  if (dueOffset < 0) return `Trễ ${Math.abs(dueOffset)} ngày`;
+  if (dueOffset === 0) return "Hôm nay";
+  return `Còn ${dueOffset} ngày`;
+};
+
+const expenseStatusTone = (expense: LivingExpense) => {
+  if (isExpensePaid(expense)) return "paid";
+  const dueOffset = daysUntilDue(expense.dueDay);
+  if (dueOffset < 0) return "late";
+  return dueOffset <= 3 ? "warning" : "neutral";
+};
+
+const expenseTrendText = (delta: number) => {
+  if (!delta) return "Bằng tháng trước";
+  return `${delta > 0 ? "Tăng" : "Giảm"} ${moneyLabel(Math.abs(delta))}`;
+};
+
+const buildExpenseNotifications = (expense: LivingExpense) => {
+  if (!expense.reminderEnabled) return [];
+  const now = new Date();
+  const paid = isExpensePaid(expense);
+  const due = expenseDueDate(expense, paid ? 1 : 0);
+  const baseBody =
+    expense.mode === "metered"
+      ? `Nhập chỉ số mới. Số cũ: ${numberLabel(expense.previousReading)}.`
+      : `Số tiền: ${moneyLabel(expense.amount)}.`;
+  const notifications: LocalNotificationSchema[] = [];
+  const remindBeforeDays = clampReminderDays(expense.remindBeforeDays);
+  if (remindBeforeDays > 0) {
+    const before = new Date(due.getTime() - remindBeforeDays * DAY_MS);
+    if (before.getTime() > now.getTime()) {
+      notifications.push({
+        id: expenseNotificationId(expense, "before"),
+        title: `Sắp đến hạn ${expense.label}`,
+        body: `Còn ${remindBeforeDays} ngày. ${baseBody}`,
+        schedule: { at: before, allowWhileIdle: true },
+        extra: { module: "expenses", expenseId: expense.id, slot: "before" }
+      });
+    }
+  }
+  if (due.getTime() > now.getTime()) {
+    notifications.push({
+      id: expenseNotificationId(expense, "due"),
+      title: `Đến hạn ${expense.label}`,
+      body: baseBody,
+      schedule: { at: due, allowWhileIdle: true },
+      extra: { module: "expenses", expenseId: expense.id, slot: "due" }
+    });
+  }
+  if (!paid && due.getTime() <= now.getTime() && expense.overdueReminder) {
+    notifications.push({
+      id: expenseNotificationId(expense, "overdue"),
+      title: `Quá hạn ${expense.label}`,
+      body: baseBody,
+      schedule: { at: nextOverdueReminderDate(), repeats: true, every: "day" as const, allowWhileIdle: true },
+      extra: { module: "expenses", expenseId: expense.id, slot: "overdue" }
+    });
+  }
+  return notifications;
+};
+
+const scheduleExpenseNotifications = async (expenses: LivingExpense[]) => {
+  if (!Capacitor.isNativePlatform()) return false;
+  const permission = await LocalNotifications.checkPermissions();
+  if (permission.display !== "granted") return false;
+  const notifications = expenses.flatMap((expense) => buildExpenseNotifications(expense));
+  await LocalNotifications.cancel({ notifications: expenseNotificationDescriptors(expenses) });
+  if (notifications.length) await LocalNotifications.schedule({ notifications });
+  return true;
+};
+
 const isRiskyCommand = (command: string) => {
   const folded = foldCommand(command);
   return /(^|\s)(tat may|shutdown|khoi dong lai|restart|sleep|hibernate|xoa|delete|dong tat ca|dong app nang|don may)(\s|$)/i.test(
@@ -759,12 +1183,13 @@ function App() {
   const [commandUsage, setCommandUsage] = useState<CommandUsage[]>([]);
   const [macros, setMacros] = useState<MacroAction[]>(readMacros());
   const [pinnedCommands, setPinnedCommands] = useState<string[]>(readPinnedCommands());
+  const [livingExpenses, setLivingExpenses] = useState<LivingExpense[]>(readLivingExpenses());
   const [lastStatusItems, setLastStatusItems] = useState<SystemStatusItem[]>([]);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [pendingLaunchCommand, setPendingLaunchCommand] = useState(parseCommandUrl(window.location.href));
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [imageViewer, setImageViewer] = useState<ImageViewerState | null>(null);
-  const [view, setView] = useState<AppView>("chat");
+  const [view, setView] = useState<AppView>("home");
   const [discovering, setDiscovering] = useState(false);
   const [showBrandIntro, setShowBrandIntro] = useState(true);
   const [brandIntroLeaving, setBrandIntroLeaving] = useState(false);
@@ -776,6 +1201,7 @@ function App() {
   const [permissionsBusy, setPermissionsBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const expenseBackupInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const stepRef = useRef<ConnectionStep>("checking");
   const stickToBottomRef = useRef(true);
@@ -880,7 +1306,7 @@ function App() {
     setPairRequestId("");
     setConnectionStep("connected");
     setConnectionText("Đã kết nối");
-    setView("chat");
+    setView("home");
     setCommandUsage(readCommandUsage(saved.baseUrl));
     const history = readChatHistory(saved.baseUrl);
     setMessages((current) =>
@@ -1029,7 +1455,7 @@ function App() {
     setConnection(null);
     setShowQuickActions(false);
     setCommandUsage([]);
-    setView("chat");
+    setView("home");
     setConnectionStep("connect");
     setConnectionText("Kết nối với máy tính");
   };
@@ -1591,6 +2017,34 @@ function App() {
     }
   };
 
+  const refreshSystemStatus = useCallback(async () => {
+    if (!connection || busy) return;
+    setBusy(true);
+    try {
+      const response = await requestJson<CommandResult>(`${connection.baseUrl}/api/command`, {
+        method: "POST",
+        headers: {
+          "X-AT-Remote-Key": connection.authKey
+        },
+        data: { command: "trạng thái máy" }
+      });
+      const data = response.data;
+      if (!response.ok || data.status === "unauthorized") throw new Error(friendlyFetchError());
+      const statusItems = extractSystemStatusItems(data.cards);
+      if (statusItems.length) setLastStatusItems(statusItems);
+      setLastCommand("trạng thái máy");
+      setCommandUsage(rememberCommandUsage(connection.baseUrl, "trạng thái máy"));
+      setConnectionText("Đã kết nối");
+      showToast("Đã cập nhật trạng thái.", "success");
+    } catch (error) {
+      const text = friendlyConnectionError(error);
+      setConnectionText("Mất kết nối");
+      showToast(text, "error");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, connection, showToast]);
+
   useEffect(() => {
     if (!pendingLaunchCommand) return;
     setDraft(pendingLaunchCommand);
@@ -1613,6 +2067,7 @@ function App() {
       { label: "Hash text", icon: Hash, prefix: "hash sha256 ", suffix: " trong mmo" },
       { label: "Trạng thái máy", icon: Cpu, command: "trạng thái máy" },
       { label: "Trợ giúp", icon: Search, command: "help" },
+      { label: "Thu chi", icon: ReceiptText, view: "expenses" },
       { label: "Tệp đã gửi", icon: FolderOpen, view: "files" },
       { label: "Quyền điều khiển", icon: Shield, view: "permissions" },
       { label: "Xóa lịch sử", icon: History, action: "clear-history" }
@@ -1648,6 +2103,161 @@ function App() {
     }
   };
 
+  const updateLivingExpense = (id: string, patch: Partial<LivingExpense>) => {
+    setLivingExpenses((current) => saveLivingExpenses(current.map((item) => (item.id === id ? { ...item, ...patch } : item))));
+  };
+
+  const addLivingExpense = () => {
+    setLivingExpenses((current) =>
+      saveLivingExpenses([
+        ...current,
+        {
+          id: newId(),
+          kind: "other",
+          label: "Khoản khác",
+          mode: "fixed",
+          dueDay: 5,
+          reminderEnabled: true,
+          remindBeforeDays: 1,
+          overdueReminder: true,
+          amount: 0,
+          unitPrice: 0,
+          previousReading: 0,
+          currentReading: 0,
+          manualTotal: 0,
+          history: []
+        }
+      ])
+    );
+  };
+
+  const deleteLivingExpense = (id: string) => {
+    setLivingExpenses((current) => saveLivingExpenses(current.filter((item) => item.id !== id)));
+  };
+
+  const closeLivingExpense = (id: string) => {
+    setLivingExpenses((current) =>
+      saveLivingExpenses(current.map((item) => (item.id === id && canCloseExpense(item) ? closeExpenseForCurrentMonth(item) : item)))
+    );
+    showToast("Đã lưu lịch sử tháng này.", "success");
+  };
+
+  const reopenLivingExpense = (id: string) => {
+    setLivingExpenses((current) =>
+      saveLivingExpenses(current.map((item) => (item.id === id ? reopenExpenseForCurrentMonth(item) : item)))
+    );
+    showToast("Đã mở lại khoản tháng này.", "success");
+  };
+
+  const closeReadyLivingExpenses = () => {
+    const readyExpenses = livingExpenses.filter((expense) => !isExpensePaid(expense) && canCloseExpense(expense));
+    if (!readyExpenses.length) {
+      showToast("Chưa có khoản nào đủ dữ liệu để đóng.", "warning");
+      return;
+    }
+    setLivingExpenses(
+      saveLivingExpenses(
+        livingExpenses.map((item) =>
+          readyExpenses.some((expense) => expense.id === item.id) ? closeExpenseForCurrentMonth(item) : item
+        )
+      )
+    );
+    showToast(`Đã lưu ${readyExpenses.length} khoản sẵn sàng.`, "success");
+  };
+
+  const exportLivingExpenses = useCallback(async () => {
+    try {
+      const fileName = `at-remote-thu-chi-${currentMonthKey()}-${Date.now()}.json`;
+      const payload = JSON.stringify(
+        {
+          app: "AT Remote",
+          module: "expenses",
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          expenses: normalizeLivingExpenses(livingExpenses)
+        },
+        null,
+        2
+      );
+      if (Capacitor.isNativePlatform()) {
+        await Filesystem.writeFile({
+          path: fileName,
+          data: payload,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8
+        });
+        const uri = await Filesystem.getUri({ path: fileName, directory: Directory.Cache });
+        await Share.share({
+          title: "AT Remote - Thu chi",
+          text: "Sao lưu dữ liệu thu chi",
+          url: uri.uri,
+          dialogTitle: "Sao lưu thu chi"
+        });
+      } else {
+        downloadBlob(new Blob([payload], { type: "application/json;charset=utf-8" }), fileName);
+      }
+      showToast("Đã tạo file sao lưu thu chi.", "success");
+    } catch {
+      showToast("Không sao lưu được thu chi.", "error");
+    }
+  }, [livingExpenses, showToast]);
+
+  const importLivingExpensesFile = useCallback(
+    async (file: File) => {
+      try {
+        const imported = parseLivingExpenseBackup(await file.text());
+        setLivingExpenses(saveLivingExpenses(imported));
+        showToast("Đã khôi phục dữ liệu thu chi.", "success");
+      } catch {
+        showToast("File sao lưu thu chi không hợp lệ.", "error");
+      }
+    },
+    [showToast]
+  );
+
+  const enableExpenseNotifications = useCallback(async () => {
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const permission = await LocalNotifications.requestPermissions();
+        if (permission.display !== "granted") {
+          showToast("Chưa bật quyền thông báo.", "warning");
+          return;
+        }
+        await scheduleExpenseNotifications(livingExpenses);
+        showToast("Đã bật nhắc thu chi.", "success");
+        return;
+      }
+      if ("Notification" in window) {
+        const permission = await Notification.requestPermission();
+        showToast(permission === "granted" ? "Đã bật nhắc khi app đang mở." : "Chưa bật quyền thông báo.", permission === "granted" ? "success" : "warning");
+        return;
+      }
+      showToast("Thiết bị chưa hỗ trợ thông báo.", "warning");
+    } catch {
+      showToast("Không bật được thông báo.", "error");
+    }
+  }, [livingExpenses, showToast]);
+
+  useEffect(() => {
+    if (step !== "connected") return;
+    const due = livingExpenses.filter((expense) => expense.reminderEnabled && !isExpensePaid(expense) && daysUntilDue(expense.dueDay) <= 0);
+    if (!due.length) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `${LIVING_EXPENSES_DUE_NOTICE_KEY}${today}:${due.map((expense) => expense.id).join(",")}`;
+    if (localStorage.getItem(key)) return;
+    const body = `Đến hạn: ${due.map((expense) => expense.label).join(", ")}`;
+    showToast(body, "warning");
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("AT Remote - Thu chi", { body });
+    }
+    localStorage.setItem(key, "1");
+  }, [livingExpenses, showToast, step]);
+
+  useEffect(() => {
+    if (step !== "connected" || !Capacitor.isNativePlatform()) return;
+    void scheduleExpenseNotifications(livingExpenses).catch(() => undefined);
+  }, [livingExpenses, step]);
+
   const frequentCommands = useMemo(() => commandUsage.slice(0, 6).map((item) => item.command), [commandUsage]);
   const commandSuggestions = useMemo(
     () => buildCommandSuggestions(draft, commandUsage, quickActions, macros, pinnedCommands),
@@ -1661,16 +2271,23 @@ function App() {
   };
 
   const viewTitle =
-    view === "files"
+    view === "home"
+      ? "Trang chủ"
+      : view === "chat"
+        ? "Chat"
+        : view === "files"
       ? "Tệp đã gửi"
       : view === "permissions"
         ? "Quyền điều khiển"
         : view === "commands"
           ? "Lệnh của tôi"
-          : "Kết quả";
+          : view === "expenses"
+            ? "Thu chi"
+            : "Kết quả";
 
   const brandIntro = showBrandIntro ? <BrandIntro leaving={brandIntroLeaving} /> : null;
   const discoveryOverlay = discovering && step !== "connected" ? <DiscoveryOverlay /> : null;
+  const showChatControls = view === "chat";
 
   if (step !== "connected") {
     return (
@@ -1794,13 +2411,58 @@ function App() {
           {connectionText === "Mất kết nối" ? "Mất kết nối" : "Đã kết nối"}
         </button>
       </header>
+      <input
+        ref={expenseBackupInputRef}
+        type="file"
+        accept="application/json,.json"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          if (file) void importLivingExpensesFile(file);
+        }}
+      />
 
-      <section className={`conversation ${view !== "chat" ? "panel-view" : ""}`} ref={listRef} onScroll={handleConversationScroll}>
-        {view === "files" ? (
+      <section className={`conversation ${view === "home" ? "home-view" : view !== "chat" ? "panel-view" : ""}`} ref={listRef} onScroll={handleConversationScroll}>
+        {view === "home" ? (
+          <HomeView
+            connectionText={connectionText}
+            expenses={livingExpenses}
+            filesCount={uploads.length}
+            lastCommand={lastCommand}
+            messagesCount={messages.length}
+            permissions={permissions}
+            statusItems={lastStatusItems}
+            onOpen={(next) => {
+              setShowQuickActions(false);
+              setView(next);
+            }}
+            onRefreshStatus={() => void refreshSystemStatus()}
+          />
+        ) : view === "expenses" ? (
+          <ExpensesView
+            expenses={livingExpenses}
+            onBack={() => setView("home")}
+            onAdd={addLivingExpense}
+            onCloseExpense={closeLivingExpense}
+            onCloseReady={closeReadyLivingExpenses}
+            onDelete={deleteLivingExpense}
+            onEnableNotifications={enableExpenseNotifications}
+            onExport={exportLivingExpenses}
+            onImport={() => expenseBackupInputRef.current?.click()}
+            onReopenExpense={reopenLivingExpense}
+            onReset={() => {
+              setLivingExpenses(saveLivingExpenses(DEFAULT_LIVING_EXPENSES));
+              showToast("Đã đặt lại thu chi.", "success");
+            }}
+            onUpdate={updateLivingExpense}
+          />
+        ) : view === "files" ? (
           <FilesView
             files={uploads}
             busy={uploadsBusy}
             message={uploadsMessage}
+            onBack={() => setView("home")}
             onRefresh={loadUploads}
             onOpenFolder={openUploadFolder}
             onOpenFile={openRemoteFile}
@@ -1812,6 +2474,7 @@ function App() {
           <PermissionsView
             groups={permissions}
             busy={permissionsBusy}
+            onBack={() => setView("home")}
             onRefresh={loadPermissions}
             onDisconnect={disconnect}
           />
@@ -1821,7 +2484,7 @@ function App() {
             pinnedCommands={pinnedCommands}
             commandUsage={commandUsage}
             lastCommand={lastCommand}
-            onBack={() => setView("chat")}
+            onBack={() => setView("home")}
             onSaveMacros={(items) => {
               setMacros(saveMacros(items));
               showToast("Đã lưu macro.", "success");
@@ -1834,13 +2497,16 @@ function App() {
           />
         ) : messages.length === 0 ? (
           <>
-            <DashboardMini
-              items={lastStatusItems}
-              lastCommand={lastCommand}
-              onRefresh={() => void sendCommand("trạng thái máy", { source: "quick" })}
-              onRepeat={lastCommand ? () => void sendCommand(lastCommand, { source: "repeat" }) : undefined}
-              onRun={(command) => void sendCommand(command, { source: "quick" })}
-            />
+            <div className="module-toolbar">
+              <button type="button" className="secondary-button" onClick={() => setView("home")}>
+                <ChevronRight size={16} />
+                Trang chủ
+              </button>
+              <button type="button" className="secondary-button" onClick={() => setView("commands")}>
+                <Repeat2 size={16} />
+                Lệnh
+              </button>
+            </div>
             <div className="empty-state">
               <MonitorSmartphone size={42} />
               <h2>Nhập yêu cầu</h2>
@@ -1849,13 +2515,16 @@ function App() {
           </>
         ) : (
           <>
-            <DashboardMini
-              items={lastStatusItems}
-              lastCommand={lastCommand}
-              onRefresh={() => void sendCommand("trạng thái máy", { source: "quick" })}
-              onRepeat={lastCommand ? () => void sendCommand(lastCommand, { source: "repeat" }) : undefined}
-              onRun={(command) => void sendCommand(command, { source: "quick" })}
-            />
+            <div className="module-toolbar">
+              <button type="button" className="secondary-button" onClick={() => setView("home")}>
+                <ChevronRight size={16} />
+                Trang chủ
+              </button>
+              <button type="button" className="secondary-button" onClick={() => setView("commands")}>
+                <Repeat2 size={16} />
+                Lệnh
+              </button>
+            </div>
             {messages.map((message) => {
               const hasCards = Boolean(message.cards?.length);
               const showBubble = message.role === "user" || message.pending || !hasCards;
@@ -1904,7 +2573,7 @@ function App() {
         )}
       </section>
 
-      {showQuickActions ? (
+      {showChatControls && showQuickActions ? (
         <section className="quick-actions-panel" aria-label="Nút nhanh">
           <div className="macro-actions" aria-label="Macro một chạm">
             <span>Macro</span>
@@ -1948,7 +2617,7 @@ function App() {
         </section>
       ) : null}
 
-      {commandSuggestions.length > 0 ? (
+      {showChatControls && commandSuggestions.length > 0 ? (
         <section className="command-suggestions" aria-label="Gợi ý hoàn thiện câu lệnh">
           {commandSuggestions.map((command) => (
             <button key={command} type="button" onClick={() => applyCommandSuggestion(command)}>
@@ -1959,6 +2628,7 @@ function App() {
         </section>
       ) : null}
 
+      {showChatControls ? (
       <form className="composer" onSubmit={onSubmitCommand}>
         <input
           ref={fileInputRef}
@@ -2004,6 +2674,7 @@ function App() {
           <span>Gửi</span>
         </button>
       </form>
+      ) : null}
 
       {toast ? <div className={`toast ${toast.tone}`} role="status">{toast.text}</div> : null}
 
@@ -2040,57 +2711,610 @@ function DiscoveryOverlay() {
   );
 }
 
-function DashboardMini({
-  items,
+function HomeView({
+  connectionText,
+  expenses,
+  filesCount,
   lastCommand,
-  onRefresh,
-  onRepeat,
-  onRun
+  messagesCount,
+  permissions,
+  statusItems,
+  onOpen,
+  onRefreshStatus
 }: {
-  items: SystemStatusItem[];
+  connectionText: string;
+  expenses: LivingExpense[];
+  filesCount: number;
   lastCommand: string;
-  onRefresh: () => void;
-  onRepeat?: () => void;
-  onRun: (command: string) => void;
+  messagesCount: number;
+  permissions: PermissionGroup[];
+  statusItems: SystemStatusItem[];
+  onOpen: (view: Exclude<AppView, "home">) => void;
+  onRefreshStatus: () => void;
 }) {
-  const visibleItems = items.length
-    ? items.slice(0, 4)
+  const expenseSummary = summarizeLivingExpenses(expenses);
+  const permissionText = permissions.length
+    ? `${permissions.filter((item) => item.enabled).length}/${permissions.length} bật`
+    : "Chưa đọc";
+  const visibleItems = statusItems.length
+    ? statusItems.slice(0, 4)
     : [
-        { label: "CPU", value: "--" },
-        { label: "RAM", value: "--" },
-        { label: "Pin", value: "--" },
-        { label: "Đang dùng", value: "--" }
+        { label: "Kết nối", value: connectionText },
+        { label: "Cần đóng", value: moneyLabel(expenseSummary.unpaid) },
+        { label: "Chat", value: messagesCount ? `${messagesCount} tin` : "Mới" },
+        { label: "Tệp", value: `${filesCount} tệp` }
       ];
+  const modules: Array<{
+    view: Exclude<AppView, "home">;
+    label: string;
+    metric: string;
+    icon: typeof Mail;
+    tone: string;
+  }> = [
+    { view: "chat", label: "Chat", metric: lastCommand ? "Có lịch sử" : "Mới", icon: MessageCircle, tone: "chat" },
+    { view: "expenses", label: "Thu chi", metric: moneyLabel(expenseSummary.unpaid), icon: ReceiptText, tone: "expenses" },
+    { view: "commands", label: "Lệnh", metric: "Macro", icon: Repeat2, tone: "commands" },
+    { view: "files", label: "Tệp", metric: `${filesCount} tệp`, icon: FolderOpen, tone: "files" },
+    { view: "permissions", label: "Quyền", metric: permissionText, icon: Shield, tone: "permissions" }
+  ];
+
   return (
-    <section className="dashboard-mini" aria-label="Trạng thái nhanh">
-      <div className="dashboard-top">
-        <div>
-          <span>Dashboard</span>
-          <strong>{lastCommand ? `Lệnh gần nhất: ${lastCommand}` : "Sẵn sàng nhận lệnh"}</strong>
+    <div className="home-dashboard">
+      <section className="home-overview" aria-label="Tổng quan">
+        <div className="home-overview-top">
+          <div>
+            <span>AT Remote</span>
+            <strong>{connectionText}</strong>
+          </div>
+          <button type="button" className="icon-button" onClick={onRefreshStatus} aria-label="Cập nhật trạng thái">
+            <RefreshCw size={17} />
+          </button>
         </div>
-        <button type="button" className="icon-button" onClick={onRefresh} aria-label="Cập nhật trạng thái">
-          <RefreshCw size={17} />
+        <div className="home-metrics">
+          {visibleItems.map((item) => (
+            <div className="home-metric" key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="module-grid" aria-label="Module">
+        {modules.map((module) => {
+          const Icon = module.icon;
+          return (
+            <button
+              type="button"
+              className={`module-tile ${module.tone}`}
+              key={module.view}
+              onClick={() => onOpen(module.view)}
+            >
+              <span className="module-icon">
+                <Icon size={24} />
+              </span>
+              <strong>{module.label}</strong>
+              <small>{module.metric}</small>
+            </button>
+          );
+        })}
+      </section>
+
+      <div className="home-recent">
+        <span>Gần nhất</span>
+        <strong>{lastCommand || "Chưa có lệnh"}</strong>
+      </div>
+    </div>
+  );
+}
+
+function ExpensesView({
+  expenses,
+  onBack,
+  onAdd,
+  onCloseExpense,
+  onCloseReady,
+  onDelete,
+  onEnableNotifications,
+  onExport,
+  onImport,
+  onReopenExpense,
+  onReset,
+  onUpdate
+}: {
+  expenses: LivingExpense[];
+  onBack: () => void;
+  onAdd: () => void;
+  onCloseExpense: (id: string) => void;
+  onCloseReady: () => void;
+  onDelete: (id: string) => void;
+  onEnableNotifications: () => void;
+  onExport: () => void;
+  onImport: () => void;
+  onReopenExpense: (id: string) => void;
+  onReset: () => void;
+  onUpdate: (id: string, patch: Partial<LivingExpense>) => void;
+}) {
+  const [selectedId, setSelectedId] = useState("");
+  const totals = summarizeLivingExpenses(expenses);
+  const unpaidExpenses = expenses.filter((expense) => !isExpensePaid(expense));
+  const readyExpenses = unpaidExpenses.filter((expense) => canCloseExpense(expense));
+  const dueExpenses = unpaidExpenses.filter((expense) => daysUntilDue(expense.dueDay) <= 0);
+  const nextExpense = expenses
+    .filter((expense) => !isExpensePaid(expense))
+    .sort((left, right) => daysUntilDue(left.dueDay) - daysUntilDue(right.dueDay))[0];
+  const taskExpenses = [
+    ...dueExpenses,
+    ...readyExpenses.filter((expense) => !dueExpenses.some((due) => due.id === expense.id)),
+    ...unpaidExpenses
+      .filter(
+        (expense) =>
+          !dueExpenses.some((due) => due.id === expense.id) && !readyExpenses.some((ready) => ready.id === expense.id)
+      )
+      .sort((left, right) => daysUntilDue(left.dueDay) - daysUntilDue(right.dueDay))
+  ].slice(0, 3);
+  const kindMeta = (expense: LivingExpense) => {
+    if (expense.kind === "rent") return { icon: Home, label: "Trọ", className: "rent" };
+    if (expense.kind === "electricity") return { icon: Zap, label: "Điện", className: "electricity" };
+    if (expense.kind === "water") return { icon: Droplets, label: "Nước", className: "water" };
+    return { icon: ReceiptText, label: "Khác", className: "other" };
+  };
+  const selectedExpense = expenses.find((expense) => expense.id === selectedId);
+
+  if (selectedExpense) {
+    return (
+      <ExpenseDetailView
+        expense={selectedExpense}
+        kindMeta={kindMeta(selectedExpense)}
+        onBack={() => setSelectedId("")}
+        onCloseExpense={onCloseExpense}
+        onDelete={onDelete}
+        onReopenExpense={onReopenExpense}
+        onUpdate={onUpdate}
+      />
+    );
+  }
+
+  return (
+    <div className="expenses-panel">
+      <div className="expenses-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Trang chủ
+        </button>
+        <button type="button" className="secondary-button" onClick={onAdd}>
+          <Plus size={16} />
+          Thêm khoản
+        </button>
+        <button type="button" className="secondary-button" onClick={onCloseReady} disabled={!readyExpenses.length}>
+          <Check size={16} />
+          Đóng sẵn
+        </button>
+        <button type="button" className="secondary-button" onClick={onEnableNotifications}>
+          <Bell size={16} />
+          Bật nhắc
+        </button>
+        <button type="button" className="secondary-button" onClick={onExport}>
+          <Download size={16} />
+          Sao lưu
+        </button>
+        <button type="button" className="secondary-button" onClick={onImport}>
+          <Save size={16} />
+          Khôi phục
+        </button>
+        <button type="button" className="danger-soft-button" onClick={onReset}>
+          <RotateCcw size={16} />
+          Đặt lại
         </button>
       </div>
-      <div className="dashboard-metrics">
-        {visibleItems.map((item) => (
-          <div className="dashboard-metric" key={item.label}>
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
+
+      <section className="living-summary" aria-label="Tổng thu chi">
+        <div className="living-summary-title">
+          <div>
+            <span>{currentMonthLabel()}</span>
+            <strong>{moneyLabel(totals.total)}</strong>
           </div>
-        ))}
+          <Banknote size={28} />
+        </div>
+        <div className="bill-summary-grid">
+          <div>
+            <span>Cần đóng</span>
+            <strong>{moneyLabel(totals.unpaid)}</strong>
+          </div>
+          <div>
+            <span>Đã đóng</span>
+            <strong>{moneyLabel(totals.paid)}</strong>
+          </div>
+          <div>
+            <span>Hạn gần</span>
+            <strong>{nextExpense ? `Ngày ${nextExpense.dueDay}` : "Đã xong"}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="expense-assist-panel" aria-label="Việc cần làm">
+        <div className="expense-assist-header">
+          <div>
+            <span>Việc cần làm</span>
+            <strong>{dueExpenses.length ? `${dueExpenses.length} khoản tới hạn` : readyExpenses.length ? `${readyExpenses.length} khoản sẵn sàng` : "Đang ổn"}</strong>
+          </div>
+          <ReceiptText size={22} />
+        </div>
+        <div className="expense-assist-list">
+          {taskExpenses.length ? (
+            taskExpenses.map((expense) => (
+              <button type="button" key={expense.id} onClick={() => setSelectedId(expense.id)}>
+                <span>{expense.label}</span>
+                <strong>
+                  {canCloseExpense(expense)
+                    ? "Đã đủ dữ liệu"
+                    : expense.mode === "metered"
+                      ? "Chờ số mới"
+                      : "Chờ số tiền"}
+                </strong>
+                <small>{expenseStatusText(expense)}</small>
+              </button>
+            ))
+          ) : (
+            <div className="expense-assist-empty">
+              <strong>Không còn khoản phải xử lý</strong>
+              <span>Tháng này đã được lưu đủ.</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <div className="expense-list">
+        {expenses.map((expense) => {
+          const total = expenseMonthTotal(expense);
+          const statusText = expenseStatusText(expense);
+          const statusTone = expenseStatusTone(expense);
+          const meta = kindMeta(expense);
+          const Icon = meta.icon;
+          const latestRecord = expense.history[0];
+          const compareRecord = previousExpenseRecord(expense);
+          const delta = compareRecord ? expenseTotalDelta(expense) : 0;
+
+          return (
+            <button type="button" className="expense-card-button" key={expense.id} onClick={() => setSelectedId(expense.id)}>
+              <div className="expense-row-header">
+                <div className={`expense-icon ${meta.className}`}>
+                  <Icon size={18} />
+                </div>
+                <div className="expense-title">
+                  <strong>{expense.label}</strong>
+                  <span>{meta.label} · hạn ngày {expense.dueDay}</span>
+                </div>
+                <span className={`expense-status ${statusTone}`}>{statusText}</span>
+              </div>
+              <div className="expense-card-metrics">
+                {expense.mode === "metered" ? (
+                  <>
+                    <div>
+                      <span>Số cũ</span>
+                      <strong>{numberLabel(expense.previousReading)}</strong>
+                    </div>
+                    <div>
+                      <span>Số mới</span>
+                      <strong>{expense.currentReading ? numberLabel(expense.currentReading) : "--"}</strong>
+                    </div>
+                    <div>
+                      <span>Đơn giá</span>
+                      <strong>{moneyLabel(expense.unitPrice)}</strong>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <span>Tiền tháng</span>
+                      <strong>{moneyLabel(expense.amount)}</strong>
+                    </div>
+                    <div>
+                      <span>Lịch sử</span>
+                      <strong>{expense.history.length} tháng</strong>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="expense-total-row compact">
+                <span>{compareRecord ? expenseTrendText(delta) : latestRecord ? `Gần nhất: ${monthLabel(latestRecord.month)}` : "Chưa có lịch sử"}</span>
+                <strong>{moneyLabel(total)}</strong>
+              </div>
+            </button>
+          );
+        })}
       </div>
-      <div className="dashboard-actions">
-        {onRepeat ? (
-          <button type="button" onClick={onRepeat}>
-            <Repeat2 size={15} />
-            Lặp lại
+    </div>
+  );
+}
+
+function ExpenseDetailView({
+  expense,
+  kindMeta,
+  onBack,
+  onCloseExpense,
+  onDelete,
+  onReopenExpense,
+  onUpdate
+}: {
+  expense: LivingExpense;
+  kindMeta: { icon: typeof Mail; label: string; className: string };
+  onBack: () => void;
+  onCloseExpense: (id: string) => void;
+  onDelete: (id: string) => void;
+  onReopenExpense: (id: string) => void;
+  onUpdate: (id: string, patch: Partial<LivingExpense>) => void;
+}) {
+  const total = expenseMonthTotal(expense);
+  const usage = expenseUsage(expense);
+  const paidRecord = currentExpenseRecord(expense);
+  const paid = isExpensePaid(expense);
+  const compareRecord = previousExpenseRecord(expense);
+  const delta = compareRecord ? expenseTotalDelta(expense) : 0;
+  const averageAmount = averageExpenseAmount(expense);
+  const reminderText = expense.reminderEnabled
+    ? `Nhắc trước ${expense.remindBeforeDays} ngày${expense.overdueReminder ? ", lặp quá hạn" : ""}`
+    : "Đã tắt nhắc";
+  const canDelete = !DEFAULT_LIVING_EXPENSES.some((item) => item.id === expense.id);
+  const closeDisabled = !canCloseExpense(expense);
+  const Icon = kindMeta.icon;
+  const updateNumber = (
+    key: "dueDay" | "remindBeforeDays" | "amount" | "unitPrice" | "previousReading" | "currentReading",
+    value: string
+  ) =>
+    onUpdate(expense.id, {
+      [key]: key === "dueDay" ? clampDueDay(value) : key === "remindBeforeDays" ? clampReminderDays(value) : cleanNumber(value)
+    } as Partial<LivingExpense>);
+  const applyLastRecord = () => {
+    if (!compareRecord) return;
+    onUpdate(
+      expense.id,
+      expense.mode === "metered"
+        ? {
+            unitPrice: compareRecord.unitPrice || expense.unitPrice,
+            previousReading: compareRecord.currentReading || expense.previousReading
+          }
+        : {
+            amount: compareRecord.amount || expense.amount
+          }
+    );
+  };
+
+  return (
+    <div className="expense-detail">
+      <div className="expenses-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Thu chi
+        </button>
+        {paid ? (
+          <button type="button" className="secondary-button" onClick={() => onReopenExpense(expense.id)}>
+            <RotateCcw size={16} />
+            Mở lại
           </button>
         ) : null}
-        <button type="button" onClick={() => onRun("chụp màn hình")}>Chụp màn hình</button>
-        <button type="button" onClick={() => onRun("thả hết phím")}>Thả hết phím</button>
+        {canDelete ? (
+          <button type="button" className="danger-soft-button" onClick={() => onDelete(expense.id)}>
+            <Trash2 size={16} />
+            Xóa
+          </button>
+        ) : null}
       </div>
-    </section>
+
+      <section className="expense-focus">
+        <div className="expense-row-header">
+          <div className={`expense-icon ${kindMeta.className}`}>
+            <Icon size={19} />
+          </div>
+          <div className="expense-title">
+            <strong>{expense.label}</strong>
+            <span>{kindMeta.label} · hạn ngày {expense.dueDay}</span>
+          </div>
+          <span className={`expense-status ${expenseStatusTone(expense)}`}>{expenseStatusText(expense)}</span>
+        </div>
+        <div className="expense-amount-block">
+          <span>Tổng cần đóng</span>
+          <strong>{moneyLabel(total)}</strong>
+        </div>
+        <div className="expense-insight-grid">
+          <div>
+            <span>So với tháng trước</span>
+            <strong>{compareRecord ? expenseTrendText(delta) : "Chưa có"}</strong>
+          </div>
+          <div>
+            <span>Trung bình 6 tháng</span>
+            <strong>{averageAmount ? moneyLabel(averageAmount) : "Chưa có"}</strong>
+          </div>
+          <div>
+            <span>Nhắc đóng tiền</span>
+            <strong>{reminderText}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className="expense-row">
+        <div className="expense-fields">
+          <label className="expense-field wide">
+            Tên
+            <input value={expense.label} onChange={(event) => onUpdate(expense.id, { label: event.target.value })} />
+          </label>
+          <label className="expense-field">
+            Hạn ngày
+            <input
+              type="number"
+              min="1"
+              max="31"
+              inputMode="numeric"
+              value={expense.dueDay}
+              onChange={(event) => updateNumber("dueDay", event.target.value)}
+            />
+          </label>
+          <label className="expense-field">
+            Nhắc trước
+            <input
+              type="number"
+              min="0"
+              max="14"
+              inputMode="numeric"
+              value={expense.remindBeforeDays}
+              onChange={(event) => updateNumber("remindBeforeDays", event.target.value)}
+            />
+          </label>
+          <label className="expense-field">
+            Loại
+            <select value={expense.kind} onChange={(event) => onUpdate(expense.id, { kind: event.target.value as BillKind })}>
+              <option value="rent">Trọ</option>
+              <option value="electricity">Điện</option>
+              <option value="water">Nước</option>
+              <option value="other">Khác</option>
+            </select>
+          </label>
+          <label className="expense-field">
+            Cách tính
+            <select value={expense.mode} onChange={(event) => onUpdate(expense.id, { mode: event.target.value as BillMode })}>
+              <option value="fixed">Cố định</option>
+              <option value="metered">Theo số</option>
+            </select>
+          </label>
+          <label className="expense-toggle">
+            <input
+              type="checkbox"
+              checked={expense.reminderEnabled}
+              onChange={(event) => onUpdate(expense.id, { reminderEnabled: event.target.checked })}
+            />
+            <span>Nhắc trên điện thoại</span>
+          </label>
+          <label className="expense-toggle">
+            <input
+              type="checkbox"
+              checked={expense.overdueReminder}
+              onChange={(event) => onUpdate(expense.id, { overdueReminder: event.target.checked })}
+            />
+            <span>Nhắc lại quá hạn</span>
+          </label>
+
+          {expense.mode === "metered" ? (
+            <>
+              <div className="reading-lock">
+                <span>Số cũ tháng trước</span>
+                <strong>{numberLabel(expense.previousReading)}</strong>
+              </div>
+              {expense.history.length === 0 ? (
+                <label className="expense-field">
+                  Số cũ ban đầu
+                  <input
+                    type="number"
+                    min="0"
+                    inputMode="decimal"
+                    value={expense.previousReading}
+                    onChange={(event) => updateNumber("previousReading", event.target.value)}
+                  />
+                </label>
+              ) : null}
+              <label className="expense-field">
+                Số mới
+                <input
+                  type="number"
+                  min="0"
+                  inputMode="decimal"
+                  value={expense.currentReading || ""}
+                  onChange={(event) => updateNumber("currentReading", event.target.value)}
+                  placeholder="Nhập chỉ số mới"
+                />
+              </label>
+              <label className="expense-field">
+                Đơn giá / khối
+                <input
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={expense.unitPrice || ""}
+                  onChange={(event) => updateNumber("unitPrice", event.target.value)}
+                />
+              </label>
+            </>
+          ) : (
+            <label className="expense-field">
+              Tiền tháng
+              <input
+                type="number"
+                min="0"
+                inputMode="numeric"
+                value={expense.amount || ""}
+                onChange={(event) => updateNumber("amount", event.target.value)}
+              />
+            </label>
+          )}
+          <label className="expense-field wide">
+            Ghi chú
+            <input value={expense.note || ""} onChange={(event) => onUpdate(expense.id, { note: event.target.value })} />
+          </label>
+        </div>
+
+        <div className="expense-total-row">
+          <span>
+            {expense.mode === "metered"
+              ? paidRecord
+                ? `${numberLabel(paidRecord.previousReading)} → ${numberLabel(paidRecord.currentReading)} · ${numberLabel(paidRecord.usage)} khối`
+                : `${numberLabel(usage)} khối x ${moneyLabel(expense.unitPrice)}`
+              : "Tổng tháng"}
+          </span>
+          <strong>{moneyLabel(total)}</strong>
+        </div>
+
+        <div className="expense-actions">
+          {compareRecord ? (
+            <button type="button" className="secondary-button" onClick={applyLastRecord}>
+              <Repeat2 size={16} />
+              Dùng tháng trước
+            </button>
+          ) : null}
+          <button type="button" className={paid ? "secondary-button" : "primary-button"} onClick={() => onCloseExpense(expense.id)} disabled={closeDisabled || paid}>
+            <Check size={16} />
+            {paid ? "Đã lưu tháng này" : "Đã đóng tiền"}
+          </button>
+        </div>
+      </section>
+
+      <section className="expense-history">
+        <div className="section-heading">
+          <h2>Lịch sử theo tháng</h2>
+        </div>
+        {expense.history.length === 0 ? (
+          <div className="empty-state compact">
+            <ReceiptText size={34} />
+            <h2>Chưa có lịch sử</h2>
+            <p>Sau khi bấm Đã đóng tiền, tháng này sẽ được lưu ở đây.</p>
+          </div>
+        ) : (
+          <div className="history-list">
+            {expense.history.map((record, index) => {
+              const beforeRecord = expense.history[index + 1];
+              const recordDelta = beforeRecord ? record.amount - beforeRecord.amount : 0;
+              const paidDate = shortDateLabel(record.paidAt);
+              return (
+                <article className="history-row" key={record.month}>
+                  <div>
+                    <strong>{monthLabel(record.month)}</strong>
+                    <span>
+                      {expense.mode === "metered"
+                        ? `${numberLabel(record.previousReading)} → ${numberLabel(record.currentReading)} · ${numberLabel(record.usage)} khối`
+                        : "Cố định"}
+                      {paidDate ? ` · đóng ${paidDate}` : ""}
+                    </span>
+                    {record.note ? <span>{record.note}</span> : null}
+                  </div>
+                  <div className="history-amount">
+                    <strong>{moneyLabel(record.amount)}</strong>
+                    {beforeRecord ? <span>{expenseTrendText(recordDelta)}</span> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -2137,7 +3361,7 @@ function CommandsView({
       <div className="panel-toolbar">
         <button type="button" className="secondary-button" onClick={onBack}>
           <ChevronRight size={16} />
-          Quay lại
+          Trang chủ
         </button>
         <button type="button" className="secondary-button" onClick={() => onRun("help", "quick")}>
           <Search size={16} />
@@ -2248,6 +3472,7 @@ function FilesView({
   files,
   busy,
   message,
+  onBack,
   onRefresh,
   onOpenFolder,
   onOpenFile,
@@ -2258,6 +3483,7 @@ function FilesView({
   files: RemoteFile[];
   busy: boolean;
   message: string;
+  onBack: () => void;
   onRefresh: () => void;
   onOpenFolder: () => void;
   onOpenFile: (file: RemoteFile) => void;
@@ -2268,6 +3494,10 @@ function FilesView({
   return (
     <div className="library-panel">
       <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Trang chủ
+        </button>
         <button type="button" className="secondary-button" onClick={onRefresh} disabled={busy}>
           <RefreshCw className={busy ? "spin" : ""} size={16} />
           Làm mới
@@ -2321,17 +3551,23 @@ function FilesView({
 function PermissionsView({
   groups,
   busy,
+  onBack,
   onRefresh,
   onDisconnect
 }: {
   groups: PermissionGroup[];
   busy: boolean;
+  onBack: () => void;
   onRefresh: () => void;
   onDisconnect: () => void;
 }) {
   return (
     <div className="permission-panel">
       <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Trang chủ
+        </button>
         <button type="button" className="secondary-button" onClick={onRefresh} disabled={busy}>
           <RefreshCw className={busy ? "spin" : ""} size={16} />
           Làm mới
