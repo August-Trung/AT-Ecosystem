@@ -52,6 +52,8 @@ tmp_ret = collect_all('aiortc')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('av')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('mss')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 piper_dir = Path(piper_pkg.__file__).resolve().parent
 for piper_data_dir in ('espeak-ng-data', 'tashkeel'):
     data_path = piper_dir / piper_data_dir

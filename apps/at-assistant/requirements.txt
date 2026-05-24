@@ -26,4 +26,5 @@ yt-dlp==2025.12.8
 cryptography
 keyring
 joblib
+mss==10.1.0
 scikit-learn

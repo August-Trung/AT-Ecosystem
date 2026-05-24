@@ -38,6 +38,16 @@ except Exception:  # pragma: no cover
     psutil = None
 
 try:
+    import mss
+except Exception:  # pragma: no cover
+    mss = None
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover
+    np = None
+
+try:
     import av
     from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 except Exception:  # pragma: no cover
@@ -569,6 +579,14 @@ def _webrtc_available() -> bool:
     return bool(av is not None and RTCPeerConnection is not None and RTCSessionDescription is not None and VideoStreamTrack is not None)
 
 
+def _fast_webrtc_capture_available() -> bool:
+    return bool(mss is not None and np is not None and av is not None)
+
+
+def _webrtc_capture_backend() -> str:
+    return "mss-bgra" if _fast_webrtc_capture_available() else "pil-imagegrab"
+
+
 def _remote_monitors() -> list[dict[str, Any]]:
     monitors: list[dict[str, Any]] = []
     try:
@@ -628,6 +646,31 @@ def _remote_monitor(monitor_id: Any = "") -> dict[str, Any]:
     return monitors[0]
 
 
+def _scaled_frame_size(width: int, height: int, max_width: int, *, even: bool = False) -> tuple[int, int]:
+    target_width = max(1, int(width))
+    target_height = max(1, int(height))
+    if max_width > 0 and target_width > max_width:
+        target_width = max(1, int(max_width))
+        target_height = max(1, int(round(height * (target_width / float(width)))))
+    if even:
+        if target_width > 2 and target_width % 2:
+            target_width -= 1
+        if target_height > 2 and target_height % 2:
+            target_height -= 1
+        target_width = max(2, target_width)
+        target_height = max(2, target_height)
+    return target_width, target_height
+
+
+def _remote_monitor_region(monitor: dict[str, Any]) -> dict[str, int]:
+    return {
+        "left": int(monitor["x"]),
+        "top": int(monitor["y"]),
+        "width": max(1, int(monitor["width"])),
+        "height": max(1, int(monitor["height"])),
+    }
+
+
 def _remote_screen_image(
     *,
     max_width: int = REMOTE_SCREEN_MAX_WIDTH,
@@ -636,20 +679,15 @@ def _remote_screen_image(
     from PIL import Image, ImageGrab
 
     monitor = _remote_monitor(monitor_id)
-    bbox = (
-        int(monitor["x"]),
-        int(monitor["y"]),
-        int(monitor["x"] + monitor["width"]),
-        int(monitor["y"] + monitor["height"]),
-    )
+    region = _remote_monitor_region(monitor)
+    bbox = (region["left"], region["top"], region["left"] + region["width"], region["top"] + region["height"])
     image = ImageGrab.grab(bbox=bbox).convert("RGB")
     width, height = image.size
     preview = image
-    if max_width > 0 and width > max_width:
-        scale = max_width / float(width)
-        preview_height = max(1, int(height * scale))
+    preview_width, preview_height = _scaled_frame_size(width, height, max_width)
+    if (preview_width, preview_height) != (width, height):
         resample_filter = getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1)
-        preview = preview.resize((max_width, preview_height), resample_filter)
+        preview = preview.resize((preview_width, preview_height), resample_filter)
     return preview, {
         "width": width,
         "height": height,
@@ -674,6 +712,58 @@ def _remote_screen_jpeg(
 
 if VideoStreamTrack is not None:
 
+    class _WebRTCScreenCapture:
+        def __init__(self, *, monitor_id: str = "", max_width: int = REMOTE_SCREEN_MAX_WIDTH) -> None:
+            self.monitor_id = str(monitor_id or "")
+            self.max_width = int(max(480, min(1920, max_width or REMOTE_SCREEN_MAX_WIDTH)))
+            self._mss = None
+            self._mss_failed = False
+
+        @property
+        def backend(self) -> str:
+            if self._mss_failed:
+                return "pil-imagegrab"
+            return _webrtc_capture_backend()
+
+        def close(self) -> None:
+            if self._mss is not None:
+                try:
+                    self._mss.close()
+                except Exception:
+                    pass
+                self._mss = None
+
+        def video_frame(self) -> Any:
+            if _fast_webrtc_capture_available() and not self._mss_failed:
+                try:
+                    return self._mss_video_frame()
+                except Exception:
+                    self._mss_failed = True
+                    self.close()
+            return self._pil_video_frame()
+
+        def _mss_video_frame(self) -> Any:
+            assert mss is not None
+            assert np is not None
+            assert av is not None
+            if self._mss is None:
+                self._mss = mss.mss()
+            monitor = _remote_monitor(self.monitor_id)
+            region = _remote_monitor_region(monitor)
+            shot = self._mss.grab(region)
+            width = max(1, int(getattr(shot, "width", region["width"])))
+            height = max(1, int(getattr(shot, "height", region["height"])))
+            target_width, target_height = _scaled_frame_size(width, height, self.max_width, even=True)
+            frame = av.VideoFrame.from_ndarray(np.asarray(shot), format="bgra")
+            return frame.reformat(width=target_width, height=target_height, format="yuv420p")
+
+        def _pil_video_frame(self) -> Any:
+            assert av is not None
+            image, _meta = _remote_screen_image(max_width=self.max_width, monitor_id=self.monitor_id)
+            frame = av.VideoFrame.from_image(image)
+            target_width, target_height = _scaled_frame_size(image.size[0], image.size[1], self.max_width, even=True)
+            return frame.reformat(width=target_width, height=target_height, format="yuv420p")
+
     class _RemoteDesktopVideoTrack(VideoStreamTrack):  # type: ignore[misc, valid-type]
         kind = "video"
 
@@ -683,6 +773,11 @@ if VideoStreamTrack is not None:
             self.frame_delay = 1.0 / float(max(1, min(REMOTE_VIDEO_MAX_FPS, int(fps or 15))))
             self.max_width = int(max(480, min(1920, max_width or REMOTE_SCREEN_MAX_WIDTH)))
             self._next_frame_at = 0.0
+            self._capture = _WebRTCScreenCapture(monitor_id=self.monitor_id, max_width=self.max_width)
+
+        def stop(self) -> None:
+            self._capture.close()
+            super().stop()
 
         async def recv(self):  # pragma: no cover - exercised by a real WebRTC client
             pts, time_base = await self.next_timestamp()
@@ -690,8 +785,7 @@ if VideoStreamTrack is not None:
             if self._next_frame_at > now:
                 await asyncio.sleep(self._next_frame_at - now)
             self._next_frame_at = time.monotonic() + self.frame_delay
-            image, _meta = _remote_screen_image(max_width=self.max_width, monitor_id=self.monitor_id)
-            frame = av.VideoFrame.from_image(image)
+            frame = self._capture.video_frame()
             frame.pts = pts
             frame.time_base = time_base
             return frame
@@ -1611,6 +1705,7 @@ class MobileRemoteBridge:
                 "h264": bool(ffmpeg),
                 "webrtc": _webrtc_available(),
                 "webrtcReason": "" if _webrtc_available() else "Desktop build chua co aiortc/av; dung H.264 fMP4 hoac MJPEG.",
+                "webrtcCapture": _webrtc_capture_backend(),
             },
             "ffmpeg": bool(ffmpeg),
         }

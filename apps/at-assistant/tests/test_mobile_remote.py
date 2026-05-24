@@ -660,6 +660,7 @@ def test_mobile_remote_desktop_capabilities_list_monitors(tmp_path, monkeypatch)
     )
     monkeypatch.setattr(mobile_remote_module, "_ffmpeg_path", lambda: "ffmpeg")
     monkeypatch.setattr(mobile_remote_module, "_webrtc_available", lambda: True)
+    monkeypatch.setattr(mobile_remote_module, "_webrtc_capture_backend", lambda: "mss-bgra")
 
     bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
     bridge.start(host="127.0.0.1", port=0)
@@ -673,9 +674,26 @@ def test_mobile_remote_desktop_capabilities_list_monitors(tmp_path, monkeypatch)
         assert payload["ok"] is True
         assert payload["streamTransports"]["h264"] is True
         assert payload["streamTransports"]["webrtc"] is True
+        assert payload["streamTransports"]["webrtcCapture"] == "mss-bgra"
         assert [monitor["id"] for monitor in payload["monitors"]] == ["monitor-0", "monitor-1"]
     finally:
         bridge.stop()
+
+
+def test_mobile_remote_webrtc_capture_backend_prefers_mss(monkeypatch):
+    monkeypatch.setattr(mobile_remote_module, "mss", object())
+    monkeypatch.setattr(mobile_remote_module, "np", object())
+    monkeypatch.setattr(mobile_remote_module, "av", object())
+
+    assert mobile_remote_module._webrtc_capture_backend() == "mss-bgra"
+
+    monkeypatch.setattr(mobile_remote_module, "mss", None)
+    assert mobile_remote_module._webrtc_capture_backend() == "pil-imagegrab"
+
+
+def test_mobile_remote_scaled_frame_size_keeps_even_video_dimensions():
+    assert mobile_remote_module._scaled_frame_size(1365, 767, 1280, even=True) == (1280, 718)
+    assert mobile_remote_module._scaled_frame_size(801, 601, 999, even=True) == (800, 600)
 
 
 def test_mobile_remote_stop_remote_desktop_control_revokes_permission(tmp_path, monkeypatch):
