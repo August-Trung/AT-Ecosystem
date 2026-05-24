@@ -932,13 +932,22 @@ button:disabled {
   background: #05070c;
 }
 
-.remote-profile-toggle {
+.remote-profile-toggle,
+.remote-transport-toggle {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
-.remote-profile-toggle button {
+.remote-profile-toggle {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.remote-transport-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.remote-profile-toggle button,
+.remote-transport-toggle button {
   min-height: 38px;
   border-radius: 8px;
   background: #f0f3f9;
@@ -948,10 +957,36 @@ button:disabled {
   font-weight: 900;
 }
 
-.remote-profile-toggle button.selected {
+.remote-profile-toggle button.selected,
+.remote-transport-toggle button.selected {
   background: #fff4ed;
   border-color: rgba(255, 90, 61, 0.34);
   color: var(--teal-dark);
+}
+
+.remote-transport-toggle button:disabled {
+  opacity: 0.45;
+}
+
+.remote-monitor-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.remote-monitor-select select {
+  min-width: 0;
+  min-height: 38px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 10px;
+  font-weight: 850;
 }
 
 .remote-sensitivity {
@@ -1041,27 +1076,31 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
 }
 
 .remote-control-panel.focus-mode .remote-screen-viewport {
-  width: 100%;
-  height: 100%;
+  width: min(100dvw, calc(100dvh * var(--remote-aspect)));
+  height: min(100dvh, calc(100dvw / var(--remote-aspect)));
 }
 
-.remote-screen-stage img {
+.remote-screen-stage img,
+.remote-screen-stage video {
   max-width: 100%;
   max-height: 100%;
+  width: 100%;
+  height: 100%;
   display: block;
   user-select: none;
   touch-action: none;
+  object-fit: fill;
 }
 
-.remote-control-panel.focus-mode .remote-screen-stage img {
+.remote-control-panel.focus-mode .remote-screen-stage img,
+.remote-control-panel.focus-mode .remote-screen-stage video {
   width: 100%;
   height: 100%;
-  object-fit: contain;
 }
 
 .remote-cursor {

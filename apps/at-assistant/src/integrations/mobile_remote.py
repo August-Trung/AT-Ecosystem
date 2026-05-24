@@ -10,7 +10,9 @@ import mimetypes
 import os
 import re
 import secrets
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import unicodedata
@@ -47,6 +49,7 @@ MAX_UPLOAD_JSON_BYTES = int(MAX_UPLOAD_BYTES * 1.5) + 1024 * 1024
 REMOTE_SCREEN_MAX_WIDTH = 1280
 REMOTE_SCREEN_JPEG_QUALITY = 62
 REMOTE_STREAM_MAX_FPS = 6
+REMOTE_VIDEO_MAX_FPS = 24
 REMOTE_CONTROL_MAX_TEXT_LENGTH = 4000
 DANGEROUS_UPLOAD_EXTENSIONS = {
     ".bat",
@@ -540,14 +543,85 @@ def _ratio(value: Any, default: float = 0.5) -> float:
     return max(0.0, min(1.0, _number(value, default)))
 
 
+def _ffmpeg_path() -> str:
+    return shutil.which("ffmpeg") or ""
+
+
+def _remote_monitors() -> list[dict[str, Any]]:
+    monitors: list[dict[str, Any]] = []
+    try:
+        raw_monitors = executor.win32api.EnumDisplayMonitors(None, None)
+        for index, item in enumerate(raw_monitors):
+            handle = item[0]
+            rect = item[2]
+            left, top, right, bottom = [int(value) for value in rect]
+            info = executor.win32api.GetMonitorInfo(handle)
+            device = str(info.get("Device") or "").strip()
+            is_primary = bool(info.get("Flags", 0) & 1)
+            width = max(1, right - left)
+            height = max(1, bottom - top)
+            monitors.append(
+                {
+                    "id": f"monitor-{index}",
+                    "label": "Màn hình chính" if is_primary else f"Màn hình {index + 1}",
+                    "device": device,
+                    "x": left,
+                    "y": top,
+                    "width": width,
+                    "height": height,
+                    "isPrimary": is_primary,
+                }
+            )
+    except Exception:
+        monitors = []
+
+    if not monitors:
+        width, height = _remote_screen_size()
+        monitors = [
+            {
+                "id": "monitor-0",
+                "label": "Màn hình chính",
+                "device": "",
+                "x": 0,
+                "y": 0,
+                "width": width,
+                "height": height,
+                "isPrimary": True,
+            }
+        ]
+
+    return monitors
+
+
+def _remote_monitor(monitor_id: Any = "") -> dict[str, Any]:
+    monitors = _remote_monitors()
+    requested = str(monitor_id or "").strip()
+    if requested:
+        for monitor in monitors:
+            if monitor["id"] == requested:
+                return monitor
+    for monitor in monitors:
+        if monitor.get("isPrimary"):
+            return monitor
+    return monitors[0]
+
+
 def _remote_screen_jpeg(
     *,
     max_width: int = REMOTE_SCREEN_MAX_WIDTH,
     quality: int = REMOTE_SCREEN_JPEG_QUALITY,
+    monitor_id: str = "",
 ) -> tuple[bytes, dict[str, Any]]:
     from PIL import Image, ImageGrab
 
-    image = ImageGrab.grab()
+    monitor = _remote_monitor(monitor_id)
+    bbox = (
+        int(monitor["x"]),
+        int(monitor["y"]),
+        int(monitor["x"] + monitor["width"]),
+        int(monitor["y"] + monitor["height"]),
+    )
+    image = ImageGrab.grab(bbox=bbox)
     width, height = image.size
     preview = image.convert("RGB")
     if max_width > 0 and width > max_width:
@@ -560,6 +634,7 @@ def _remote_screen_jpeg(
     return buffer.getvalue(), {
         "width": width,
         "height": height,
+        "monitorId": monitor["id"],
         "previewWidth": preview.size[0],
         "previewHeight": preview.size[1],
         "capturedAt": _now_iso(),
@@ -570,11 +645,12 @@ def _remote_screen_snapshot(
     *,
     max_width: int = REMOTE_SCREEN_MAX_WIDTH,
     quality: int = REMOTE_SCREEN_JPEG_QUALITY,
+    monitor_id: str = "",
 ) -> dict[str, Any]:
     try:
-        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality)
+        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality, monitor_id=monitor_id)
         encoded = base64.b64encode(frame).decode("ascii")
-        cursor = _remote_cursor_state()
+        cursor = _remote_cursor_state(monitor_id)
         return {
             "ok": True,
             "status": "success",
@@ -590,7 +666,10 @@ def _remote_screen_snapshot(
         return _remote_error_payload(f"Không thể chụp màn hình: {exc}", code=ErrorCode.INTERNAL_ERROR)
 
 
-def _remote_screen_size() -> tuple[int, int]:
+def _remote_screen_size(monitor_id: Any = "") -> tuple[int, int]:
+    if str(monitor_id or "").strip():
+        monitor = _remote_monitor(monitor_id)
+        return max(1, int(monitor["width"])), max(1, int(monitor["height"]))
     try:
         width = int(executor.win32api.GetSystemMetrics(0))
         height = int(executor.win32api.GetSystemMetrics(1))
@@ -599,36 +678,49 @@ def _remote_screen_size() -> tuple[int, int]:
     return max(1, width), max(1, height)
 
 
-def _remote_cursor_state() -> dict[str, Any]:
-    width, height = _remote_screen_size()
+def _remote_cursor_state(monitor_id: Any = "") -> dict[str, Any]:
+    monitor = _remote_monitor(monitor_id) if str(monitor_id or "").strip() else None
+    width, height = _remote_screen_size(monitor_id)
     try:
         x, y = executor.win32api.GetCursorPos()
     except Exception:
         x, y = 0, 0
-    x = max(0, min(width - 1, int(x)))
-    y = max(0, min(height - 1, int(y)))
+    x = int(x)
+    y = int(y)
+    local_x = x - int(monitor["x"]) if monitor else x
+    local_y = y - int(monitor["y"]) if monitor else y
+    local_x = max(0, min(width - 1, int(local_x)))
+    local_y = max(0, min(height - 1, int(local_y)))
     return {
-        "x": x,
-        "y": y,
+        "x": local_x,
+        "y": local_y,
+        "globalX": x,
+        "globalY": y,
         "width": width,
         "height": height,
-        "xRatio": x / max(1, width - 1),
-        "yRatio": y / max(1, height - 1),
+        "monitorId": monitor["id"] if monitor else "",
+        "xRatio": local_x / max(1, width - 1),
+        "yRatio": local_y / max(1, height - 1),
         "capturedAt": _now_iso(),
     }
 
 
-def _with_remote_cursor(payload: dict[str, Any]) -> dict[str, Any]:
-    payload["cursor"] = _remote_cursor_state()
+def _with_remote_cursor(payload: dict[str, Any], monitor_id: Any = "") -> dict[str, Any]:
+    payload["cursor"] = _remote_cursor_state(monitor_id)
     return payload
 
 
 def _remote_point(payload: dict[str, Any], *, prefix: str = "") -> tuple[int, int]:
-    width, height = _remote_screen_size()
+    monitor_id = payload.get("monitorId") or payload.get("screenId") or ""
+    monitor = _remote_monitor(monitor_id) if str(monitor_id or "").strip() else None
+    width, height = _remote_screen_size(monitor_id)
     x_key = f"{prefix}XRatio" if prefix else "xRatio"
     y_key = f"{prefix}YRatio" if prefix else "yRatio"
     x = int(round((width - 1) * _ratio(payload.get(x_key), 0.5)))
     y = int(round((height - 1) * _ratio(payload.get(y_key), 0.5)))
+    if monitor:
+        x += int(monitor["x"])
+        y += int(monitor["y"])
     return x, y
 
 
@@ -683,6 +775,7 @@ def _remote_keyboard_result(payload: dict[str, Any], action: str) -> ActionResul
 
 def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action") or payload.get("type") or "").strip().lower().replace("-", "_")
+    monitor_id = payload.get("monitorId") or payload.get("screenId") or ""
     try:
         if action in {"tap", "click", "right_tap", "right_click", "double_tap", "double_click"}:
             executor.win32api.SetCursorPos(_remote_point(payload))
@@ -694,7 +787,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
                 _mouse_click("left")
             else:
                 _mouse_click(str(payload.get("button") or "left"))
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã gửi thao tác chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã gửi thao tác chuột.", remote_action=action)), monitor_id)
 
         if action == "drag":
             start = _remote_point(payload, prefix="from")
@@ -705,11 +798,11 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             executor.win32api.SetCursorPos(end)
             time.sleep(0.03)
             executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_LEFTUP, end[0], end[1], 0, 0)
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã kéo chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã kéo chuột.", remote_action=action)), monitor_id)
 
         if action in {"move_to", "hover"}:
             executor.win32api.SetCursorPos(_remote_point(payload))
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)), monitor_id)
 
         if action in {"mouse_down", "button_down"}:
             executor.win32api.SetCursorPos(_remote_point(payload))
@@ -722,7 +815,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
                 flag = executor.win32con.MOUSEEVENTF_LEFTDOWN
             x, y = executor.win32api.GetCursorPos()
             executor.win32api.mouse_event(flag, x, y, 0, 0)
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã giữ chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã giữ chuột.", remote_action=action)), monitor_id)
 
         if action in {"mouse_up", "button_up"}:
             executor.win32api.SetCursorPos(_remote_point(payload))
@@ -735,7 +828,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
                 flag = executor.win32con.MOUSEEVENTF_LEFTUP
             x, y = executor.win32api.GetCursorPos()
             executor.win32api.mouse_event(flag, x, y, 0, 0)
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhả chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhả chuột.", remote_action=action)), monitor_id)
 
         if action == "move":
             width, height = _remote_screen_size()
@@ -746,14 +839,14 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             x = max(0, min(width - 1, int(round(cx + dx * scale))))
             y = max(0, min(height - 1, int(round(cy + dy * scale))))
             executor.win32api.SetCursorPos((x, y))
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)), monitor_id)
 
         if action == "scroll":
             amount = int(max(-960, min(960, -_number(payload.get("deltaY"), 120.0))))
             if amount == 0:
                 amount = -120
             executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_WHEEL, 0, 0, amount, 0)
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action)), monitor_id)
 
         if action in {"key", "hotkey", "combo", "release_all"}:
             key_payload = {**payload}
@@ -773,11 +866,75 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             paste_result = executor.keyboard_control("paste")
             if paste_result.status == ActionStatus.ERROR:
                 return mobile_payload_from_result(paste_result)
-            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhập văn bản vào máy tính.", remote_action=action)))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhập văn bản vào máy tính.", remote_action=action)), monitor_id)
 
         return _remote_error_payload("Thao tác điều khiển không hợp lệ.", code=ErrorCode.UNKNOWN)
     except Exception as exc:
         return _remote_error_payload(f"Không thể gửi thao tác điều khiển: {exc}", code=ErrorCode.INTERNAL_ERROR)
+
+
+def _h264_stream_command(*, monitor_id: str = "", fps: int = 15, max_width: int = 1280) -> list[str]:
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg:
+        return []
+    monitor = _remote_monitor(monitor_id)
+    width = max(1, int(monitor["width"]))
+    height = max(1, int(monitor["height"]))
+    target_width = width
+    target_height = height
+    if max_width > 0 and width > max_width:
+        target_width = max(2, int(max_width))
+        target_height = max(2, int(round(height * (target_width / float(width)))))
+    if target_width % 2:
+        target_width -= 1
+    if target_height % 2:
+        target_height -= 1
+    target_width = max(2, target_width)
+    target_height = max(2, target_height)
+    fps = int(max(4, min(REMOTE_VIDEO_MAX_FPS, fps)))
+    gop = max(8, fps)
+    return [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "gdigrab",
+        "-draw_mouse",
+        "0",
+        "-framerate",
+        str(fps),
+        "-offset_x",
+        str(int(monitor["x"])),
+        "-offset_y",
+        str(int(monitor["y"])),
+        "-video_size",
+        f"{width}x{height}",
+        "-i",
+        "desktop",
+        "-vf",
+        f"scale={target_width}:{target_height}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-tune",
+        "zerolatency",
+        "-pix_fmt",
+        "yuv420p",
+        "-g",
+        str(gop),
+        "-keyint_min",
+        str(gop),
+        "-sc_threshold",
+        "0",
+        "-movflags",
+        "frag_keyframe+empty_moov+default_base_moof+dash",
+        "-f",
+        "mp4",
+        "pipe:1",
+    ]
 
 
 def _normalize_bind_host(host: str) -> str:
@@ -1257,31 +1414,65 @@ class MobileRemoteBridge:
             "groups": permission_groups_public(public.get("permissions") or {}),
         }
 
-    def remote_screen(self, auth_key: str) -> dict[str, Any]:
+    def _remote_control_active(self, device: dict[str, Any], action: str = "view") -> None:
+        self._emit(
+            "remote_control_active",
+            {
+                "device": _public_device(device),
+                "action": action,
+                "at": _now_iso(),
+            },
+        )
+
+    def remote_capabilities(self, auth_key: str) -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
             return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
         if not _permission_enabled(device, "remote_desktop"):
             return _permission_denied_payload("remote_desktop")
-        payload = _remote_screen_snapshot()
+        ffmpeg = _ffmpeg_path()
+        return {
+            "ok": True,
+            "status": "success",
+            "device": _public_device(device),
+            "monitors": _remote_monitors(),
+            "streamTransports": {
+                "mjpeg": True,
+                "h264": bool(ffmpeg),
+                "webrtc": False,
+                "webrtcReason": "Chưa đóng gói aiortc/av trong desktop build; dùng H.264 fMP4 low-latency qua FFmpeg.",
+            },
+            "ffmpeg": bool(ffmpeg),
+        }
+
+    def remote_screen(self, auth_key: str, *, monitor_id: str = "") -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        self._remote_control_active(device, "screen")
+        payload = _remote_screen_snapshot(monitor_id=monitor_id)
         payload["device"] = _public_device(device)
         return payload
 
-    def remote_stream_auth(self, auth_key: str) -> dict[str, Any]:
+    def remote_stream_auth(self, auth_key: str, *, action: str = "stream") -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
             return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
         if not _permission_enabled(device, "remote_desktop"):
             return _permission_denied_payload("remote_desktop")
+        self._remote_control_active(device, action)
         return {"ok": True, "device": _public_device(device)}
 
-    def remote_cursor(self, auth_key: str) -> dict[str, Any]:
+    def remote_cursor(self, auth_key: str, *, monitor_id: str = "") -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
             return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
         if not _permission_enabled(device, "remote_desktop"):
             return _permission_denied_payload("remote_desktop")
-        return {"ok": True, "status": "success", "cursor": _remote_cursor_state(), "device": _public_device(device)}
+        self._remote_control_active(device, "cursor")
+        return {"ok": True, "status": "success", "cursor": _remote_cursor_state(monitor_id), "device": _public_device(device)}
 
     def handle_remote_input(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
         device = self._authenticate(auth_key)
@@ -1289,6 +1480,7 @@ class MobileRemoteBridge:
             return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
         if not _permission_enabled(device, "remote_desktop"):
             return _permission_denied_payload("remote_desktop")
+        self._remote_control_active(device, str(payload.get("action") or "input"))
         result = _remote_input_result(payload)
         result["device"] = _public_device(device)
         return result
@@ -1719,14 +1911,22 @@ class MobileRemoteBridge:
                 if parsed.path == "/api/permissions":
                     self._send_json(bridge.device_permissions(self._auth_key()))
                     return
+                if parsed.path == "/api/remote/capabilities":
+                    self._send_json(bridge.remote_capabilities(self._auth_key()))
+                    return
                 if parsed.path == "/api/remote/screen":
-                    self._send_json(bridge.remote_screen(self._auth_key()))
+                    query = parse_qs(parsed.query)
+                    self._send_json(bridge.remote_screen(self._auth_key(), monitor_id=(query.get("monitorId") or [""])[0]))
                     return
                 if parsed.path == "/api/remote/cursor":
-                    self._send_json(bridge.remote_cursor(self._auth_key()))
+                    query = parse_qs(parsed.query)
+                    self._send_json(bridge.remote_cursor(self._auth_key(), monitor_id=(query.get("monitorId") or [""])[0]))
                     return
                 if parsed.path == "/api/remote/stream":
                     self._send_remote_stream(parsed)
+                    return
+                if parsed.path == "/api/remote/video":
+                    self._send_remote_video(parsed)
                     return
                 if parsed.path.startswith("/api/files/"):
                     query = parse_qs(parsed.query)
@@ -1838,13 +2038,14 @@ class MobileRemoteBridge:
                         self.wfile.write(chunk)
 
             def _send_remote_stream(self, parsed) -> None:
-                auth_payload = bridge.remote_stream_auth(self._auth_key_from_query(parsed))
+                auth_payload = bridge.remote_stream_auth(self._auth_key_from_query(parsed), action="mjpeg_stream")
                 if not auth_payload.get("ok"):
                     status = HTTPStatus.UNAUTHORIZED if auth_payload.get("status") == "unauthorized" else HTTPStatus.FORBIDDEN
                     self._send_json(auth_payload, status=status)
                     return
 
                 query = parse_qs(parsed.query)
+                monitor_id = (query.get("monitorId") or [""])[0]
                 fps = int(max(1, min(REMOTE_STREAM_MAX_FPS, _number((query.get("fps") or ["4"])[0], 4))))
                 quality = int(max(35, min(85, _number((query.get("quality") or [str(REMOTE_SCREEN_JPEG_QUALITY)])[0], REMOTE_SCREEN_JPEG_QUALITY))))
                 max_width = int(max(480, min(1920, _number((query.get("maxWidth") or [str(REMOTE_SCREEN_MAX_WIDTH)])[0], REMOTE_SCREEN_MAX_WIDTH))))
@@ -1860,7 +2061,7 @@ class MobileRemoteBridge:
                 while True:
                     started = time.monotonic()
                     try:
-                        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality)
+                        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality, monitor_id=monitor_id)
                         headers = (
                             b"--atremote\r\n"
                             b"Content-Type: image/jpeg\r\n"
@@ -1882,6 +2083,64 @@ class MobileRemoteBridge:
                     elapsed = time.monotonic() - started
                     if elapsed < delay:
                         time.sleep(delay - elapsed)
+
+            def _send_remote_video(self, parsed) -> None:
+                auth_payload = bridge.remote_stream_auth(self._auth_key_from_query(parsed), action="h264_stream")
+                if not auth_payload.get("ok"):
+                    status = HTTPStatus.UNAUTHORIZED if auth_payload.get("status") == "unauthorized" else HTTPStatus.FORBIDDEN
+                    self._send_json(auth_payload, status=status)
+                    return
+
+                query = parse_qs(parsed.query)
+                monitor_id = (query.get("monitorId") or [""])[0]
+                fps = int(max(4, min(REMOTE_VIDEO_MAX_FPS, _number((query.get("fps") or ["15"])[0], 15))))
+                max_width = int(max(640, min(1920, _number((query.get("maxWidth") or [str(REMOTE_SCREEN_MAX_WIDTH)])[0], REMOTE_SCREEN_MAX_WIDTH))))
+                command = _h264_stream_command(monitor_id=monitor_id, fps=fps, max_width=max_width)
+                if not command:
+                    self._send_json(
+                        {
+                            "ok": False,
+                            "status": "unavailable",
+                            "message": "Chưa tìm thấy ffmpeg để phát H.264.",
+                        },
+                        status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    )
+                    return
+
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                process = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                )
+                try:
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "video/mp4")
+                    self.send_header("Connection", "close")
+                    self.send_header("X-AT-Remote-Transport", "h264-fmp4")
+                    self._custom_cache_control = True
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    assert process.stdout is not None
+                    while True:
+                        chunk = process.stdout.read(1024 * 64)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                    pass
+                finally:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+                    try:
+                        process.wait(timeout=1)
+                    except Exception:
+                        pass
 
             def _serve_static(self, request_path: str) -> None:
                 root = _at_remote_dist_dir()

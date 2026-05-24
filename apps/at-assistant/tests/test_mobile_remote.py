@@ -591,7 +591,7 @@ def test_mobile_remote_desktop_serves_screen_snapshot(tmp_path, monkeypatch):
         monkeypatch.setattr(
             mobile_remote_module,
             "_remote_screen_snapshot",
-            lambda: {
+            lambda **_kwargs: {
                 "ok": True,
                 "status": "success",
                 "message": "screen",
@@ -647,6 +647,53 @@ def test_mobile_remote_desktop_serves_mjpeg_stream(tmp_path, monkeypatch):
         assert b"image/jpeg" in chunk
     finally:
         bridge.stop()
+
+
+def test_mobile_remote_desktop_capabilities_list_monitors(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        mobile_remote_module,
+        "_remote_monitors",
+        lambda: [
+            {"id": "monitor-0", "label": "Màn hình chính", "x": 0, "y": 0, "width": 1000, "height": 600, "isPrimary": True},
+            {"id": "monitor-1", "label": "Màn hình 2", "x": 1000, "y": 0, "width": 800, "height": 600, "isPrimary": False},
+        ],
+    )
+    monkeypatch.setattr(mobile_remote_module, "_ffmpeg_path", lambda: "ffmpeg")
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+
+        payload = requests.get(f"{base}/api/remote/capabilities", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+
+        assert payload["ok"] is True
+        assert payload["streamTransports"]["h264"] is True
+        assert [monitor["id"] for monitor in payload["monitors"]] == ["monitor-0", "monitor-1"]
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_h264_command_targets_monitor(monkeypatch):
+    monkeypatch.setattr(
+        mobile_remote_module,
+        "_remote_monitors",
+        lambda: [
+            {"id": "monitor-0", "label": "Màn hình chính", "x": 0, "y": 0, "width": 1000, "height": 600, "isPrimary": True},
+            {"id": "monitor-1", "label": "Màn hình 2", "x": -800, "y": 0, "width": 800, "height": 600, "isPrimary": False},
+        ],
+    )
+    monkeypatch.setattr(mobile_remote_module, "_ffmpeg_path", lambda: "ffmpeg")
+
+    command = mobile_remote_module._h264_stream_command(monitor_id="monitor-1", fps=16, max_width=640)
+
+    assert command
+    assert command[command.index("-offset_x") + 1] == "-800"
+    assert command[command.index("-video_size") + 1] == "800x600"
+    assert command[command.index("-framerate") + 1] == "16"
+    assert command[command.index("-c:v") + 1] == "libx264"
 
 
 def test_mobile_remote_desktop_serves_cursor_state(tmp_path, monkeypatch):
@@ -712,5 +759,55 @@ def test_mobile_remote_desktop_tap_routes_mouse_input(tmp_path, monkeypatch):
             ("mouse", mobile_remote_module.executor.win32con.MOUSEEVENTF_LEFTDOWN),
             ("mouse", mobile_remote_module.executor.win32con.MOUSEEVENTF_LEFTUP),
         ]
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_desktop_input_maps_selected_monitor(tmp_path, monkeypatch):
+    events: list[tuple[str, tuple[int, int] | int]] = []
+    cursor = [0, 0]
+
+    monkeypatch.setattr(
+        mobile_remote_module,
+        "_remote_monitors",
+        lambda: [
+            {"id": "monitor-0", "label": "Màn hình chính", "x": 0, "y": 0, "width": 1000, "height": 500, "isPrimary": True},
+            {"id": "monitor-1", "label": "Màn hình 2", "x": 1000, "y": 0, "width": 800, "height": 600, "isPrimary": False},
+        ],
+    )
+
+    def fake_set_cursor_pos(point: tuple[int, int]) -> None:
+        cursor[0], cursor[1] = point
+        events.append(("pos", point))
+
+    def fake_get_cursor_pos() -> tuple[int, int]:
+        return (cursor[0], cursor[1])
+
+    def fake_mouse_event(flag: int, x: int, y: int, data: int, extra: int) -> None:
+        events.append(("mouse", flag))
+
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "SetCursorPos", fake_set_cursor_pos)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "GetCursorPos", fake_get_cursor_pos)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "mouse_event", fake_mouse_event)
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+
+        payload = requests.post(
+            f"{base}/api/remote/input",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"action": "tap", "monitorId": "monitor-1", "xRatio": 0.5, "yRatio": 0.5},
+            timeout=3,
+        ).json()
+
+        assert payload["status"] == "success"
+        assert payload["cursor"]["monitorId"] == "monitor-1"
+        assert payload["cursor"]["x"] == 400
+        assert payload["cursor"]["y"] == 300
+        assert events[0] == ("pos", (1400, 300))
     finally:
         bridge.stop()

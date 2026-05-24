@@ -218,6 +218,10 @@ class ATAssistantApp(ctk.CTk):
         self._telegram_bridge_stop: threading.Event | None = None
         self._telegram_bridge_config_key = ""
         self._mobile_remote_dialog: MobileRemoteDialog | None = None
+        self._remote_control_indicator: ctk.CTkToplevel | None = None
+        self._remote_control_indicator_title: ctk.CTkLabel | None = None
+        self._remote_control_indicator_detail: ctk.CTkLabel | None = None
+        self._remote_control_indicator_hide_after: str | None = None
         self._mobile_remote_bridge = MobileRemoteBridge(
             self.engine,
             on_event=self._handle_mobile_remote_event,
@@ -2163,6 +2167,8 @@ class ATAssistantApp(ctk.CTk):
                 self.chat.add_system_message(
                     f"Đã kết nối điện thoại: {payload.get('name') or 'Thiết bị'}."
                 )
+            elif event == "remote_control_active":
+                self._show_remote_control_indicator(payload)
             elif event == "file_received":
                 file_info = payload.get("file") if isinstance(payload.get("file"), dict) else {}
                 name = str(file_info.get("name") or Path(str(payload.get("path") or "")).name or "tệp")
@@ -2209,6 +2215,71 @@ class ATAssistantApp(ctk.CTk):
                     self._reload_chat_session_list()
 
         self._safe_after(0, append)
+
+    def _show_remote_control_indicator(self, payload: dict) -> None:
+        if self._is_quitting:
+            return
+        if self._remote_control_indicator is None or not self._remote_control_indicator.winfo_exists():
+            indicator = ctk.CTkToplevel(self)
+            indicator.overrideredirect(True)
+            indicator.attributes("-topmost", True)
+            indicator.configure(fg_color="#111827")
+            frame = ctk.CTkFrame(indicator, fg_color="#111827", border_color="#22c55e", border_width=2, corner_radius=10)
+            frame.pack(fill="both", expand=True)
+            title = ctk.CTkLabel(
+                frame,
+                text="Đang điều khiển từ điện thoại",
+                text_color="#ffffff",
+                font=(FONT_FAMILY, FONT_SIZE_NORMAL, "bold"),
+                anchor="w",
+            )
+            title.pack(fill="x", padx=14, pady=(10, 2))
+            detail = ctk.CTkLabel(
+                frame,
+                text="",
+                text_color="#bbf7d0",
+                font=(FONT_FAMILY, FONT_SIZE_SMALL),
+                anchor="w",
+            )
+            detail.pack(fill="x", padx=14, pady=(0, 10))
+            self._remote_control_indicator = indicator
+            self._remote_control_indicator_title = title
+            self._remote_control_indicator_detail = detail
+
+        device = payload.get("device") if isinstance(payload.get("device"), dict) else {}
+        name = str(device.get("name") or device.get("deviceName") or "Điện thoại").strip()
+        action = str(payload.get("action") or "remote").replace("_", " ")
+        if self._remote_control_indicator_detail is not None:
+            self._remote_control_indicator_detail.configure(text=f"{name} • {action}")
+
+        indicator = self._remote_control_indicator
+        if indicator is None:
+            return
+        indicator.update_idletasks()
+        width = max(300, indicator.winfo_reqwidth())
+        height = max(58, indicator.winfo_reqheight())
+        x = max(12, self.winfo_screenwidth() - width - 18)
+        y = 18
+        indicator.geometry(f"{width}x{height}+{x}+{y}")
+        indicator.deiconify()
+        indicator.lift()
+
+        if self._remote_control_indicator_hide_after:
+            try:
+                self.after_cancel(self._remote_control_indicator_hide_after)
+                self._after_ids.discard(self._remote_control_indicator_hide_after)
+            except Exception:
+                pass
+        self._remote_control_indicator_hide_after = self._safe_after(5000, self._hide_remote_control_indicator)
+
+    def _hide_remote_control_indicator(self) -> None:
+        self._remote_control_indicator_hide_after = None
+        indicator = self._remote_control_indicator
+        if indicator is not None and indicator.winfo_exists():
+            try:
+                indicator.withdraw()
+            except Exception:
+                pass
 
     def _on_custom_apps_dialog_destroy(self, event=None) -> None:
         widget = getattr(event, "widget", None)
@@ -2949,6 +3020,14 @@ class ATAssistantApp(ctk.CTk):
         ):
             try:
                 self._mobile_remote_dialog.destroy()
+            except Exception:
+                pass
+        if (
+            self._remote_control_indicator is not None
+            and self._remote_control_indicator.winfo_exists()
+        ):
+            try:
+                self._remote_control_indicator.destroy()
             except Exception:
                 pass
         if (

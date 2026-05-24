@@ -52,7 +52,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { FormEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, PointerEvent, TouchEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionStep = "checking" | "connect" | "pending" | "connected";
 type MessageRole = "user" | "assistant";
@@ -211,17 +211,32 @@ type ImageViewerState = {
 type RemoteCursorState = {
   x: number;
   y: number;
+  globalX?: number;
+  globalY?: number;
   width: number;
   height: number;
+  monitorId?: string;
   xRatio?: number;
   yRatio?: number;
   capturedAt?: string;
+};
+
+type RemoteMonitor = {
+  id: string;
+  label: string;
+  device?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isPrimary?: boolean;
 };
 
 type RemoteScreenFrame = {
   image: string;
   width: number;
   height: number;
+  monitorId?: string;
   previewWidth?: number;
   previewHeight?: number;
   capturedAt?: string;
@@ -250,7 +265,21 @@ type RemoteCursorResponse = {
   cursor?: RemoteCursorState;
 };
 
+type RemoteCapabilitiesResponse = {
+  ok?: boolean;
+  status?: string;
+  message?: string;
+  monitors?: RemoteMonitor[];
+  streamTransports?: {
+    mjpeg?: boolean;
+    h264?: boolean;
+    webrtc?: boolean;
+    webrtcReason?: string;
+  };
+};
+
 type RemoteStreamProfile = "smooth" | "balanced" | "sharp";
+type RemoteStreamTransport = "h264" | "mjpeg";
 
 type HealthPayload = {
   ok?: boolean;
@@ -298,10 +327,13 @@ const MAX_STORED_COMMANDS = 36;
 const MAX_COMMAND_SUGGESTIONS = 6;
 const BRAND_INTRO_HOLD_MS = 920;
 const BRAND_INTRO_FADE_MS = 260;
-const REMOTE_STREAM_PROFILES: Record<RemoteStreamProfile, { label: string; fps: number; maxWidth: number; quality: number }> = {
-  smooth: { label: "Mượt", fps: 6, maxWidth: 960, quality: 52 },
-  balanced: { label: "Cân bằng", fps: 5, maxWidth: 1280, quality: 62 },
-  sharp: { label: "Nét", fps: 3, maxWidth: 1600, quality: 74 }
+const REMOTE_STREAM_PROFILES: Record<
+  RemoteStreamProfile,
+  { label: string; mjpegFps: number; h264Fps: number; maxWidth: number; quality: number }
+> = {
+  smooth: { label: "Mượt", mjpegFps: 6, h264Fps: 20, maxWidth: 960, quality: 52 },
+  balanced: { label: "Cân bằng", mjpegFps: 5, h264Fps: 16, maxWidth: 1280, quality: 62 },
+  sharp: { label: "Nét", mjpegFps: 3, h264Fps: 12, maxWidth: 1600, quality: 74 }
 };
 
 const ShareReceiver = registerPlugin<{
@@ -2900,6 +2932,10 @@ function RemoteControlView({
   const [liveMode, setLiveMode] = useState(true);
   const [streamNonce, setStreamNonce] = useState(0);
   const [streamProfile, setStreamProfile] = useState<RemoteStreamProfile>("balanced");
+  const [streamTransport, setStreamTransport] = useState<RemoteStreamTransport>("h264");
+  const [h264Available, setH264Available] = useState(true);
+  const [monitors, setMonitors] = useState<RemoteMonitor[]>([]);
+  const [selectedMonitorId, setSelectedMonitorId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cursor, setCursor] = useState<RemoteCursorState | null>(null);
@@ -2919,22 +2955,47 @@ function RemoteControlView({
     lastSentAt: number;
     holdTimer?: number;
   } | null>(null);
+  const screenGestureRef = useRef<{
+    centerX: number;
+    centerY: number;
+    xRatio: number;
+    yRatio: number;
+    startedAt: number;
+    moved: boolean;
+    lastSentAt: number;
+  } | null>(null);
+  const twoFingerActiveRef = useRef(false);
   const touchpadRef = useRef<{ clientX: number; clientY: number; moved: boolean; lastSentAt: number } | null>(null);
+  const selectedMonitor = monitors.find((monitor) => monitor.id === selectedMonitorId) || monitors.find((monitor) => monitor.isPrimary) || monitors[0];
   const streamUrl = useMemo(() => {
     const profile = REMOTE_STREAM_PROFILES[streamProfile];
     const params = new URLSearchParams({
       key: authKey,
-      fps: String(profile.fps),
+      fps: String(profile.mjpegFps),
       maxWidth: String(profile.maxWidth),
       quality: String(profile.quality),
+      monitorId: selectedMonitorId,
       v: String(streamNonce)
     });
     return `${baseUrl}/api/remote/stream?${params.toString()}`;
-  }, [authKey, baseUrl, streamNonce, streamProfile]);
-  const screenImageSrc = liveMode ? streamUrl : screen?.image || "";
-  const hasScreenImage = Boolean(screenImageSrc);
-  const remoteWidth = Math.max(1, screen?.width || cursor?.width || 1);
-  const remoteHeight = Math.max(1, screen?.height || cursor?.height || 1);
+  }, [authKey, baseUrl, selectedMonitorId, streamNonce, streamProfile]);
+  const videoUrl = useMemo(() => {
+    const profile = REMOTE_STREAM_PROFILES[streamProfile];
+    const params = new URLSearchParams({
+      key: authKey,
+      fps: String(profile.h264Fps),
+      maxWidth: String(profile.maxWidth),
+      monitorId: selectedMonitorId,
+      v: String(streamNonce)
+    });
+    return `${baseUrl}/api/remote/video?${params.toString()}`;
+  }, [authKey, baseUrl, selectedMonitorId, streamNonce, streamProfile]);
+  const usingH264 = liveMode && streamTransport === "h264" && h264Available;
+  const screenImageSrc = liveMode && !usingH264 ? streamUrl : screen?.image || "";
+  const hasScreenMedia = usingH264 || Boolean(screenImageSrc);
+  const remoteWidth = Math.max(1, screen?.width || cursor?.width || selectedMonitor?.width || 1);
+  const remoteHeight = Math.max(1, screen?.height || cursor?.height || selectedMonitor?.height || 1);
+  const remoteAspect = remoteWidth / remoteHeight;
   const cursorXRatio = cursor ? Math.max(0, Math.min(1, cursor.xRatio ?? cursor.x / Math.max(1, cursor.width - 1))) : lastPoint.xRatio;
   const cursorYRatio = cursor ? Math.max(0, Math.min(1, cursor.yRatio ?? cursor.y / Math.max(1, cursor.height - 1))) : lastPoint.yRatio;
 
@@ -2953,12 +3014,37 @@ function RemoteControlView({
     [remoteHeight, remoteWidth]
   );
 
+  const loadCapabilities = useCallback(async () => {
+    try {
+      const response = await requestJson<RemoteCapabilitiesResponse>(`${baseUrl}/api/remote/capabilities`, {
+        headers: { "X-AT-Remote-Key": authKey },
+        connectTimeout: 3500,
+        readTimeout: 6000
+      });
+      const data = response.data;
+      if (!response.ok || !data.ok) throw new Error(data.message || friendlyFetchError());
+      const nextMonitors = data.monitors || [];
+      setMonitors(nextMonitors);
+      setSelectedMonitorId((current) => {
+        if (current && nextMonitors.some((monitor) => monitor.id === current)) return current;
+        return nextMonitors.find((monitor) => monitor.isPrimary)?.id || nextMonitors[0]?.id || "";
+      });
+      const canUseH264 = Boolean(data.streamTransports?.h264);
+      setH264Available(canUseH264);
+      if (!canUseH264) setStreamTransport("mjpeg");
+    } catch {
+      setH264Available(false);
+      setStreamTransport("mjpeg");
+    }
+  }, [authKey, baseUrl]);
+
   const loadScreen = useCallback(async () => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     setBusy(true);
     try {
-      const response = await requestJson<RemoteScreenResponse>(`${baseUrl}/api/remote/screen`, {
+      const params = new URLSearchParams({ monitorId: selectedMonitorId });
+      const response = await requestJson<RemoteScreenResponse>(`${baseUrl}/api/remote/screen?${params.toString()}`, {
         headers: { "X-AT-Remote-Key": authKey },
         connectTimeout: 4000,
         readTimeout: 12000
@@ -2976,11 +3062,12 @@ function RemoteControlView({
       loadingRef.current = false;
       setBusy(false);
     }
-  }, [authKey, baseUrl]);
+  }, [authKey, baseUrl, selectedMonitorId]);
 
   const loadCursor = useCallback(async () => {
     try {
-      const response = await requestJson<RemoteCursorResponse>(`${baseUrl}/api/remote/cursor`, {
+      const params = new URLSearchParams({ monitorId: selectedMonitorId });
+      const response = await requestJson<RemoteCursorResponse>(`${baseUrl}/api/remote/cursor?${params.toString()}`, {
         headers: { "X-AT-Remote-Key": authKey },
         connectTimeout: 2500,
         readTimeout: 3500
@@ -2990,7 +3077,7 @@ function RemoteControlView({
     } catch {
       // Cursor polling is best-effort; stream/input errors are surfaced elsewhere.
     }
-  }, [authKey, baseUrl]);
+  }, [authKey, baseUrl, selectedMonitorId]);
 
   const sendRemoteInput = useCallback(
     async (payload: Record<string, unknown>, refresh = true) => {
@@ -2998,7 +3085,7 @@ function RemoteControlView({
         const response = await requestJson<RemoteInputResponse>(`${baseUrl}/api/remote/input`, {
           method: "POST",
           headers: { "X-AT-Remote-Key": authKey },
-          data: payload,
+          data: { monitorId: selectedMonitorId, ...payload },
           connectTimeout: 3500,
           readTimeout: 8000
         });
@@ -3015,8 +3102,12 @@ function RemoteControlView({
         onToast(text, "error");
       }
     },
-    [authKey, baseUrl, liveMode, loadScreen, onToast]
+    [authKey, baseUrl, liveMode, loadScreen, onToast, selectedMonitorId]
   );
+
+  useEffect(() => {
+    void loadCapabilities();
+  }, [loadCapabilities]);
 
   useEffect(() => {
     void loadScreen();
@@ -3097,13 +3188,15 @@ function RemoteControlView({
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, [unlockOrientation]);
 
-  const pointFromImageEvent = (event: PointerEvent<HTMLImageElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
+  const pointFromClient = (element: HTMLElement, clientX: number, clientY: number) => {
+    const rect = element.getBoundingClientRect();
     return {
-      xRatio: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
-      yRatio: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
+      xRatio: Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width))),
+      yRatio: Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)))
     };
   };
+
+  const pointFromMediaEvent = (event: PointerEvent<HTMLElement>) => pointFromClient(event.currentTarget, event.clientX, event.clientY);
 
   const clearScreenHoldTimer = () => {
     const current = screenPointerRef.current;
@@ -3133,8 +3226,9 @@ function RemoteControlView({
     void loadScreen();
   };
 
-  const handleScreenPointerDown = (event: PointerEvent<HTMLImageElement>) => {
-    const point = pointFromImageEvent(event);
+  const handleScreenPointerDown = (event: PointerEvent<HTMLElement>) => {
+    if (twoFingerActiveRef.current) return;
+    const point = pointFromMediaEvent(event);
     setLastPoint(point);
     updateLocalCursorFromPoint(point);
     screenPointerRef.current = {
@@ -3156,10 +3250,11 @@ function RemoteControlView({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleScreenPointerMove = (event: PointerEvent<HTMLImageElement>) => {
+  const handleScreenPointerMove = (event: PointerEvent<HTMLElement>) => {
+    if (twoFingerActiveRef.current) return;
     const start = screenPointerRef.current;
     if (!start) return;
-    const point = pointFromImageEvent(event);
+    const point = pointFromMediaEvent(event);
     const distance = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
     setLastPoint(point);
     updateLocalCursorFromPoint(point);
@@ -3174,14 +3269,21 @@ function RemoteControlView({
     void sendRemoteInput({ action: "move_to", ...point }, false);
   };
 
-  const handleScreenPointerUp = (event: PointerEvent<HTMLImageElement>) => {
+  const handleScreenPointerUp = (event: PointerEvent<HTMLElement>) => {
+    if (twoFingerActiveRef.current) {
+      screenPointerRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      return;
+    }
     const start = screenPointerRef.current;
     screenPointerRef.current = null;
     if (start?.holdTimer) window.clearTimeout(start.holdTimer);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const end = pointFromImageEvent(event);
+    const end = pointFromMediaEvent(event);
     setLastPoint(end);
     updateLocalCursorFromPoint(end);
     if (!start) {
@@ -3208,7 +3310,11 @@ function RemoteControlView({
     void sendRemoteInput({ action: "tap", ...end });
   };
 
-  const handleScreenPointerCancel = (event: PointerEvent<HTMLImageElement>) => {
+  const handleScreenPointerCancel = (event: PointerEvent<HTMLElement>) => {
+    if (twoFingerActiveRef.current) {
+      screenPointerRef.current = null;
+      return;
+    }
     const start = screenPointerRef.current;
     screenPointerRef.current = null;
     if (start?.holdTimer) window.clearTimeout(start.holdTimer);
@@ -3216,8 +3322,73 @@ function RemoteControlView({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     if (start?.dragging) {
-      const point = pointFromImageEvent(event);
+      const point = pointFromMediaEvent(event);
       void sendRemoteInput({ action: "mouse_up", ...point }, false);
+    }
+  };
+
+  const twoFingerCenter = (touches: { [index: number]: { clientX: number; clientY: number } }) => ({
+    clientX: (touches[0].clientX + touches[1].clientX) / 2,
+    clientY: (touches[0].clientY + touches[1].clientY) / 2
+  });
+
+  const handleScreenTouchStart = (event: TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 2) return;
+    event.preventDefault();
+    twoFingerActiveRef.current = true;
+    clearScreenHoldTimer();
+    screenPointerRef.current = null;
+    const center = twoFingerCenter(event.touches);
+    const point = pointFromClient(event.currentTarget, center.clientX, center.clientY);
+    setLastPoint(point);
+    updateLocalCursorFromPoint(point);
+    screenGestureRef.current = {
+      centerX: center.clientX,
+      centerY: center.clientY,
+      ...point,
+      startedAt: Date.now(),
+      moved: false,
+      lastSentAt: 0
+    };
+  };
+
+  const handleScreenTouchMove = (event: TouchEvent<HTMLElement>) => {
+    const gesture = screenGestureRef.current;
+    if (!gesture || event.touches.length !== 2) return;
+    event.preventDefault();
+    const center = twoFingerCenter(event.touches);
+    const dy = center.clientY - gesture.centerY;
+    const dx = center.clientX - gesture.centerX;
+    const distance = Math.hypot(dx, dy);
+    const point = pointFromClient(event.currentTarget, center.clientX, center.clientY);
+    setLastPoint(point);
+    updateLocalCursorFromPoint(point);
+    if (distance > 4) gesture.moved = true;
+    const now = Date.now();
+    if (Math.abs(dy) >= 4 && now - gesture.lastSentAt >= 45) {
+      gesture.centerX = center.clientX;
+      gesture.centerY = center.clientY;
+      gesture.xRatio = point.xRatio;
+      gesture.yRatio = point.yRatio;
+      gesture.lastSentAt = now;
+      void sendRemoteInput({ action: "scroll", deltaY: dy * 5 }, false);
+    }
+  };
+
+  const handleScreenTouchEnd = (event: TouchEvent<HTMLElement>) => {
+    const gesture = screenGestureRef.current;
+    if (!gesture) {
+      twoFingerActiveRef.current = false;
+      return;
+    }
+    event.preventDefault();
+    screenGestureRef.current = null;
+    window.setTimeout(() => {
+      twoFingerActiveRef.current = false;
+    }, 80);
+    const elapsed = Date.now() - gesture.startedAt;
+    if (!gesture.moved && elapsed < 280) {
+      void sendRemoteInput({ action: "right_tap", xRatio: gesture.xRatio, yRatio: gesture.yRatio });
     }
   };
 
@@ -3275,6 +3446,10 @@ function RemoteControlView({
     { label: "Backspace", payload: { action: "key", key: "backspace" } },
     { label: "Delete", payload: { action: "key", key: "delete" } }
   ];
+  const remoteViewportStyle = {
+    "--remote-aspect": String(remoteAspect),
+    aspectRatio: `${remoteWidth} / ${remoteHeight}`
+  } as Record<string, string>;
 
   return (
     <div ref={panelRef} className={`remote-control-panel ${focusMode ? "focus-mode" : ""}`}>
@@ -3317,6 +3492,47 @@ function RemoteControlView({
             </button>
           ))}
         </div>
+        <div className="remote-transport-toggle" aria-label="Kiểu stream">
+          <button
+            type="button"
+            className={streamTransport === "h264" ? "selected" : ""}
+            disabled={!h264Available}
+            onClick={() => {
+              setStreamTransport("h264");
+              setStreamNonce((value) => value + 1);
+            }}
+          >
+            H.264
+          </button>
+          <button
+            type="button"
+            className={streamTransport === "mjpeg" ? "selected" : ""}
+            onClick={() => {
+              setStreamTransport("mjpeg");
+              setStreamNonce((value) => value + 1);
+            }}
+          >
+            MJPEG
+          </button>
+        </div>
+        {monitors.length > 1 ? (
+          <label className="remote-monitor-select">
+            <span>Màn hình</span>
+            <select
+              value={selectedMonitorId}
+              onChange={(event) => {
+                setSelectedMonitorId(event.target.value);
+                setStreamNonce((value) => value + 1);
+              }}
+            >
+              {monitors.map((monitor) => (
+                <option key={monitor.id} value={monitor.id}>
+                  {monitor.label} ({monitor.width}x{monitor.height})
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label className="remote-sensitivity">
           <span>Độ nhạy</span>
           <input
@@ -3335,31 +3551,59 @@ function RemoteControlView({
         <div className="remote-screen-head">
           <div>
             <span>Màn hình laptop</span>
-            <strong>{screen ? `${screen.width} x ${screen.height}` : liveMode ? "Live stream" : "Chưa có khung hình"}</strong>
+            <strong>{`${remoteWidth} x ${remoteHeight}`}</strong>
           </div>
-          <small>{liveMode ? (isFullscreen ? "Fullscreen" : "MJPEG") : "Manual"}</small>
+          <small>{liveMode ? (usingH264 ? "H.264" : isFullscreen ? "Fullscreen" : "MJPEG") : "Manual"}</small>
         </div>
-        <div className={`remote-screen-stage ${hasScreenImage ? "" : "empty"}`}>
-          {hasScreenImage ? (
-            <div className="remote-screen-viewport">
-              <img
-                src={screenImageSrc}
-                alt="Laptop screen"
-                draggable={false}
-                onLoad={() => {
-                  if (liveMode) setMessage("Live stream đang chạy");
-                }}
-                onError={() => {
-                  if (!liveMode) return;
-                  setMessage("Không mở được live stream. Đang chuyển sang làm mới thủ công.");
-                  setLiveMode(false);
-                  void loadScreen();
-                }}
-                onPointerDown={handleScreenPointerDown}
-                onPointerMove={handleScreenPointerMove}
-                onPointerUp={handleScreenPointerUp}
-                onPointerCancel={handleScreenPointerCancel}
-              />
+        <div className={`remote-screen-stage ${hasScreenMedia ? "" : "empty"}`} style={{ aspectRatio: `${remoteWidth} / ${remoteHeight}` }}>
+          {hasScreenMedia ? (
+            <div className="remote-screen-viewport" style={remoteViewportStyle}>
+              {usingH264 ? (
+                <video
+                  key={videoUrl}
+                  src={videoUrl}
+                  autoPlay
+                  muted
+                  playsInline
+                  draggable={false}
+                  onLoadedData={() => setMessage("H.264 live stream đang chạy")}
+                  onError={() => {
+                    setMessage("Không mở được H.264. Đang chuyển sang MJPEG.");
+                    setStreamTransport("mjpeg");
+                    setH264Available(false);
+                    setStreamNonce((value) => value + 1);
+                  }}
+                  onPointerDown={handleScreenPointerDown}
+                  onPointerMove={handleScreenPointerMove}
+                  onPointerUp={handleScreenPointerUp}
+                  onPointerCancel={handleScreenPointerCancel}
+                  onTouchStart={handleScreenTouchStart}
+                  onTouchMove={handleScreenTouchMove}
+                  onTouchEnd={handleScreenTouchEnd}
+                />
+              ) : (
+                <img
+                  src={screenImageSrc}
+                  alt="Laptop screen"
+                  draggable={false}
+                  onLoad={() => {
+                    if (liveMode) setMessage("Live stream đang chạy");
+                  }}
+                  onError={() => {
+                    if (!liveMode) return;
+                    setMessage("Không mở được live stream. Đang chuyển sang làm mới thủ công.");
+                    setLiveMode(false);
+                    void loadScreen();
+                  }}
+                  onPointerDown={handleScreenPointerDown}
+                  onPointerMove={handleScreenPointerMove}
+                  onPointerUp={handleScreenPointerUp}
+                  onPointerCancel={handleScreenPointerCancel}
+                  onTouchStart={handleScreenTouchStart}
+                  onTouchMove={handleScreenTouchMove}
+                  onTouchEnd={handleScreenTouchEnd}
+                />
+              )}
               <span
                 className={`remote-cursor ${focusMode ? "active" : ""}`}
                 style={{ left: `${cursorXRatio * 100}%`, top: `${cursorYRatio * 100}%` }}
