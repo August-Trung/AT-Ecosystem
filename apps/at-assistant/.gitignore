@@ -9,6 +9,8 @@ venv/
 # Build artifacts
 build/
 dist/
+build-latest/
+dist-latest/
 *.egg-info/
 
 # Test/coverage caches

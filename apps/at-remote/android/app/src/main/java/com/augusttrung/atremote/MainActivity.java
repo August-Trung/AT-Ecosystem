@@ -8,6 +8,7 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        registerPlugin(RemoteDisplayPlugin.class);
         registerPlugin(ShareReceiverPlugin.class);
         ShareReceiverPlugin.captureIntent(this, getIntent());
         super.onCreate(savedInstanceState);

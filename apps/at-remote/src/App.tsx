@@ -208,6 +208,16 @@ type ImageViewerState = {
   file?: RemoteFile;
 };
 
+type RemoteCursorState = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  xRatio?: number;
+  yRatio?: number;
+  capturedAt?: string;
+};
+
 type RemoteScreenFrame = {
   image: string;
   width: number;
@@ -215,6 +225,7 @@ type RemoteScreenFrame = {
   previewWidth?: number;
   previewHeight?: number;
   capturedAt?: string;
+  cursor?: RemoteCursorState;
 };
 
 type RemoteScreenResponse = {
@@ -222,12 +233,21 @@ type RemoteScreenResponse = {
   status?: string;
   message?: string;
   screen?: RemoteScreenFrame;
+  cursor?: RemoteCursorState;
 };
 
 type RemoteInputResponse = {
   ok?: boolean;
   status?: string;
   message?: string;
+  cursor?: RemoteCursorState;
+};
+
+type RemoteCursorResponse = {
+  ok?: boolean;
+  status?: string;
+  message?: string;
+  cursor?: RemoteCursorState;
 };
 
 type RemoteStreamProfile = "smooth" | "balanced" | "sharp";
@@ -288,6 +308,11 @@ const ShareReceiver = registerPlugin<{
   getSharedPayload: () => Promise<SharedPayload>;
   clearSharedPayload: () => Promise<{ ok: boolean }>;
 }>("ShareReceiver");
+
+const RemoteDisplay = registerPlugin<{
+  lockLandscape: () => Promise<{ ok?: boolean }>;
+  unlock: () => Promise<{ ok?: boolean }>;
+}>("RemoteDisplay");
 
 const BASE_COMMAND_SUGGESTIONS = [
   "help",
@@ -2876,16 +2901,23 @@ function RemoteControlView({
   const [streamNonce, setStreamNonce] = useState(0);
   const [streamProfile, setStreamProfile] = useState<RemoteStreamProfile>("balanced");
   const [focusMode, setFocusMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [cursor, setCursor] = useState<RemoteCursorState | null>(null);
   const [touchSensitivity, setTouchSensitivity] = useState(1.8);
   const [message, setMessage] = useState("Chưa có khung hình");
   const [textDraft, setTextDraft] = useState("");
   const [lastPoint, setLastPoint] = useState({ xRatio: 0.5, yRatio: 0.5 });
   const loadingRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const screenPointerRef = useRef<{
     clientX: number;
     clientY: number;
     xRatio: number;
     yRatio: number;
+    moved: boolean;
+    dragging: boolean;
+    lastSentAt: number;
+    holdTimer?: number;
   } | null>(null);
   const touchpadRef = useRef<{ clientX: number; clientY: number; moved: boolean; lastSentAt: number } | null>(null);
   const streamUrl = useMemo(() => {
@@ -2901,6 +2933,25 @@ function RemoteControlView({
   }, [authKey, baseUrl, streamNonce, streamProfile]);
   const screenImageSrc = liveMode ? streamUrl : screen?.image || "";
   const hasScreenImage = Boolean(screenImageSrc);
+  const remoteWidth = Math.max(1, screen?.width || cursor?.width || 1);
+  const remoteHeight = Math.max(1, screen?.height || cursor?.height || 1);
+  const cursorXRatio = cursor ? Math.max(0, Math.min(1, cursor.xRatio ?? cursor.x / Math.max(1, cursor.width - 1))) : lastPoint.xRatio;
+  const cursorYRatio = cursor ? Math.max(0, Math.min(1, cursor.yRatio ?? cursor.y / Math.max(1, cursor.height - 1))) : lastPoint.yRatio;
+
+  const updateLocalCursorFromPoint = useCallback(
+    (point: { xRatio: number; yRatio: number }) => {
+      setCursor({
+        x: Math.round((remoteWidth - 1) * point.xRatio),
+        y: Math.round((remoteHeight - 1) * point.yRatio),
+        width: remoteWidth,
+        height: remoteHeight,
+        xRatio: point.xRatio,
+        yRatio: point.yRatio,
+        capturedAt: new Date().toISOString()
+      });
+    },
+    [remoteHeight, remoteWidth]
+  );
 
   const loadScreen = useCallback(async () => {
     if (loadingRef.current) return;
@@ -2915,6 +2966,7 @@ function RemoteControlView({
       const data = response.data;
       if (!response.ok || !data.ok || !data.screen) throw new Error(data.message || friendlyFetchError());
       setScreen(data.screen);
+      if (data.cursor || data.screen.cursor) setCursor(data.cursor || data.screen.cursor || null);
       setMessage(data.message || "Đã cập nhật màn hình");
     } catch (error) {
       const text = friendlyConnectionError(error);
@@ -2923,6 +2975,20 @@ function RemoteControlView({
     } finally {
       loadingRef.current = false;
       setBusy(false);
+    }
+  }, [authKey, baseUrl]);
+
+  const loadCursor = useCallback(async () => {
+    try {
+      const response = await requestJson<RemoteCursorResponse>(`${baseUrl}/api/remote/cursor`, {
+        headers: { "X-AT-Remote-Key": authKey },
+        connectTimeout: 2500,
+        readTimeout: 3500
+      });
+      const data = response.data;
+      if (response.ok && data.ok && data.cursor) setCursor(data.cursor);
+    } catch {
+      // Cursor polling is best-effort; stream/input errors are surfaced elsewhere.
     }
   }, [authKey, baseUrl]);
 
@@ -2940,6 +3006,7 @@ function RemoteControlView({
         if (!response.ok || data.status === "error" || data.status === "unauthorized") {
           throw new Error(data.message || friendlyFetchError());
         }
+        if (data.cursor) setCursor(data.cursor);
         setMessage(data.message || "Đã gửi thao tác");
         if (refresh && !liveMode) window.setTimeout(() => void loadScreen(), 180);
       } catch (error) {
@@ -2955,12 +3022,95 @@ function RemoteControlView({
     void loadScreen();
   }, [loadScreen]);
 
+  useEffect(() => {
+    void loadCursor();
+    const interval = window.setInterval(() => {
+      void loadCursor();
+    }, focusMode ? 350 : liveMode ? 700 : 1200);
+    return () => window.clearInterval(interval);
+  }, [focusMode, liveMode, loadCursor]);
+
+  const lockLandscape = useCallback(async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await RemoteDisplay.lockLandscape();
+      } catch {
+        // Browser orientation lock below is the fallback.
+      }
+    }
+    const orientation = window.screen.orientation as ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+      unlock?: () => void;
+    };
+    try {
+      await orientation.lock?.("landscape");
+    } catch {
+      // Some mobile browsers only allow orientation lock from installed apps/fullscreen.
+    }
+  }, []);
+
+  const unlockOrientation = useCallback(() => {
+    if (Capacitor.isNativePlatform()) {
+      void RemoteDisplay.unlock().catch(() => undefined);
+    }
+    const orientation = window.screen.orientation as ScreenOrientation & { unlock?: () => void };
+    try {
+      orientation.unlock?.();
+    } catch {
+      // Best-effort cleanup.
+    }
+  }, []);
+
+  const enterFocusMode = useCallback(async () => {
+    setFocusMode(true);
+    setMessage("Đang mở toàn màn hình");
+    const target = panelRef.current ?? document.documentElement;
+    try {
+      if (!document.fullscreenElement) await target.requestFullscreen?.();
+    } catch {
+      // Capacitor WebView may not expose browser fullscreen; focus mode still expands in-app.
+    }
+    await lockLandscape();
+  }, [lockLandscape]);
+
+  const exitFocusMode = useCallback(async () => {
+    setFocusMode(false);
+    unlockOrientation();
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen?.();
+    } catch {
+      // Ignore browser-specific fullscreen exit failures.
+    }
+  }, [unlockOrientation]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (!active) {
+        setFocusMode(false);
+        unlockOrientation();
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    handleFullscreenChange();
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, [unlockOrientation]);
+
   const pointFromImageEvent = (event: PointerEvent<HTMLImageElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     return {
       xRatio: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
       yRatio: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
     };
+  };
+
+  const clearScreenHoldTimer = () => {
+    const current = screenPointerRef.current;
+    if (current?.holdTimer) {
+      window.clearTimeout(current.holdTimer);
+      current.holdTimer = undefined;
+    }
   };
 
   const toggleLive = () => {
@@ -2985,32 +3135,90 @@ function RemoteControlView({
 
   const handleScreenPointerDown = (event: PointerEvent<HTMLImageElement>) => {
     const point = pointFromImageEvent(event);
+    setLastPoint(point);
+    updateLocalCursorFromPoint(point);
     screenPointerRef.current = {
       ...point,
       clientX: event.clientX,
-      clientY: event.clientY
+      clientY: event.clientY,
+      moved: false,
+      dragging: false,
+      lastSentAt: 0
     };
+    if (focusMode) {
+      screenPointerRef.current.holdTimer = window.setTimeout(() => {
+        const current = screenPointerRef.current;
+        if (!current) return;
+        current.dragging = true;
+        void sendRemoteInput({ action: "mouse_down", xRatio: current.xRatio, yRatio: current.yRatio }, false);
+      }, 360);
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleScreenPointerMove = (event: PointerEvent<HTMLImageElement>) => {
+    const start = screenPointerRef.current;
+    if (!start) return;
+    const point = pointFromImageEvent(event);
+    const distance = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
+    setLastPoint(point);
+    updateLocalCursorFromPoint(point);
+    if (!focusMode) return;
+    if (distance > 5) {
+      start.moved = true;
+      if (!start.dragging) clearScreenHoldTimer();
+    }
+    const now = Date.now();
+    if (now - start.lastSentAt < 36) return;
+    start.lastSentAt = now;
+    void sendRemoteInput({ action: "move_to", ...point }, false);
   };
 
   const handleScreenPointerUp = (event: PointerEvent<HTMLImageElement>) => {
     const start = screenPointerRef.current;
     screenPointerRef.current = null;
+    if (start?.holdTimer) window.clearTimeout(start.holdTimer);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     const end = pointFromImageEvent(event);
     setLastPoint(end);
+    updateLocalCursorFromPoint(end);
     if (!start) {
       void sendRemoteInput({ action: "tap", ...end });
       return;
     }
     const distance = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
+    if (focusMode) {
+      if (start.dragging) {
+        void sendRemoteInput({ action: "mouse_up", ...end });
+        return;
+      }
+      if (distance > 14 || start.moved) {
+        void sendRemoteInput({ action: "move_to", ...end }, false);
+        return;
+      }
+      void sendRemoteInput({ action: "tap", ...end });
+      return;
+    }
     if (distance > 14) {
       void sendRemoteInput({ action: "drag", fromXRatio: start.xRatio, fromYRatio: start.yRatio, ...end });
       return;
     }
     void sendRemoteInput({ action: "tap", ...end });
+  };
+
+  const handleScreenPointerCancel = (event: PointerEvent<HTMLImageElement>) => {
+    const start = screenPointerRef.current;
+    screenPointerRef.current = null;
+    if (start?.holdTimer) window.clearTimeout(start.holdTimer);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (start?.dragging) {
+      const point = pointFromImageEvent(event);
+      void sendRemoteInput({ action: "mouse_up", ...point }, false);
+    }
   };
 
   const handleTouchpadDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -3069,11 +3277,11 @@ function RemoteControlView({
   ];
 
   return (
-    <div className={`remote-control-panel ${focusMode ? "focus-mode" : ""}`}>
+    <div ref={panelRef} className={`remote-control-panel ${focusMode ? "focus-mode" : ""}`}>
       <div className="panel-toolbar">
-        <button type="button" className="secondary-button" onClick={onBack}>
+        <button type="button" className="secondary-button" onClick={focusMode ? () => void exitFocusMode() : onBack}>
           <ChevronRight size={16} />
-          Trang chủ
+          {focusMode ? "Thoát" : "Trang chủ"}
         </button>
         <button type="button" className={liveMode ? "danger-soft-button" : "secondary-button"} onClick={toggleLive}>
           <MonitorSmartphone size={16} />
@@ -3083,7 +3291,7 @@ function RemoteControlView({
           <RefreshCw className={busy ? "spin" : ""} size={16} />
           {liveMode ? "Nối lại" : "Làm mới"}
         </button>
-        <button type="button" className="secondary-button" onClick={() => setFocusMode((value) => !value)}>
+        <button type="button" className="secondary-button" onClick={() => (focusMode ? void exitFocusMode() : void enterFocusMode())}>
           {focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           {focusMode ? "Thu gọn" : "Màn lớn"}
         </button>
@@ -3129,26 +3337,37 @@ function RemoteControlView({
             <span>Màn hình laptop</span>
             <strong>{screen ? `${screen.width} x ${screen.height}` : liveMode ? "Live stream" : "Chưa có khung hình"}</strong>
           </div>
-          <small>{liveMode ? "MJPEG" : "Manual"}</small>
+          <small>{liveMode ? (isFullscreen ? "Fullscreen" : "MJPEG") : "Manual"}</small>
         </div>
         <div className={`remote-screen-stage ${hasScreenImage ? "" : "empty"}`}>
           {hasScreenImage ? (
-            <img
-              src={screenImageSrc}
-              alt="Laptop screen"
-              draggable={false}
-              onLoad={() => {
-                if (liveMode) setMessage("Live stream đang chạy");
-              }}
-              onError={() => {
-                if (!liveMode) return;
-                setMessage("Không mở được live stream. Đang chuyển sang làm mới thủ công.");
-                setLiveMode(false);
-                void loadScreen();
-              }}
-              onPointerDown={handleScreenPointerDown}
-              onPointerUp={handleScreenPointerUp}
-            />
+            <div className="remote-screen-viewport">
+              <img
+                src={screenImageSrc}
+                alt="Laptop screen"
+                draggable={false}
+                onLoad={() => {
+                  if (liveMode) setMessage("Live stream đang chạy");
+                }}
+                onError={() => {
+                  if (!liveMode) return;
+                  setMessage("Không mở được live stream. Đang chuyển sang làm mới thủ công.");
+                  setLiveMode(false);
+                  void loadScreen();
+                }}
+                onPointerDown={handleScreenPointerDown}
+                onPointerMove={handleScreenPointerMove}
+                onPointerUp={handleScreenPointerUp}
+                onPointerCancel={handleScreenPointerCancel}
+              />
+              <span
+                className={`remote-cursor ${focusMode ? "active" : ""}`}
+                style={{ left: `${cursorXRatio * 100}%`, top: `${cursorYRatio * 100}%` }}
+                aria-hidden="true"
+              >
+                <MousePointer2 size={focusMode ? 26 : 22} />
+              </span>
+            </div>
           ) : (
             <div>
               <MonitorSmartphone size={42} />

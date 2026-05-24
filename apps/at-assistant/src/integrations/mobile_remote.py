@@ -574,12 +574,15 @@ def _remote_screen_snapshot(
     try:
         frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality)
         encoded = base64.b64encode(frame).decode("ascii")
+        cursor = _remote_cursor_state()
         return {
             "ok": True,
             "status": "success",
             "message": "Đã cập nhật màn hình.",
+            "cursor": cursor,
             "screen": {
                 "image": f"data:image/jpeg;base64,{encoded}",
+                "cursor": cursor,
                 **meta,
             },
         }
@@ -594,6 +597,30 @@ def _remote_screen_size() -> tuple[int, int]:
     except Exception:
         width, height = 1, 1
     return max(1, width), max(1, height)
+
+
+def _remote_cursor_state() -> dict[str, Any]:
+    width, height = _remote_screen_size()
+    try:
+        x, y = executor.win32api.GetCursorPos()
+    except Exception:
+        x, y = 0, 0
+    x = max(0, min(width - 1, int(x)))
+    y = max(0, min(height - 1, int(y)))
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "xRatio": x / max(1, width - 1),
+        "yRatio": y / max(1, height - 1),
+        "capturedAt": _now_iso(),
+    }
+
+
+def _with_remote_cursor(payload: dict[str, Any]) -> dict[str, Any]:
+    payload["cursor"] = _remote_cursor_state()
+    return payload
 
 
 def _remote_point(payload: dict[str, Any], *, prefix: str = "") -> tuple[int, int]:
@@ -667,7 +694,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
                 _mouse_click("left")
             else:
                 _mouse_click(str(payload.get("button") or "left"))
-            return mobile_payload_from_result(ActionResult.ok("Đã gửi thao tác chuột.", remote_action=action))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã gửi thao tác chuột.", remote_action=action)))
 
         if action == "drag":
             start = _remote_point(payload, prefix="from")
@@ -678,7 +705,37 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             executor.win32api.SetCursorPos(end)
             time.sleep(0.03)
             executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_LEFTUP, end[0], end[1], 0, 0)
-            return mobile_payload_from_result(ActionResult.ok("Đã kéo chuột.", remote_action=action))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã kéo chuột.", remote_action=action)))
+
+        if action in {"move_to", "hover"}:
+            executor.win32api.SetCursorPos(_remote_point(payload))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)))
+
+        if action in {"mouse_down", "button_down"}:
+            executor.win32api.SetCursorPos(_remote_point(payload))
+            button = str(payload.get("button") or "left").strip().lower()
+            if button == "right":
+                flag = executor.win32con.MOUSEEVENTF_RIGHTDOWN
+            elif button == "middle":
+                flag = getattr(executor.win32con, "MOUSEEVENTF_MIDDLEDOWN", 0x0020)
+            else:
+                flag = executor.win32con.MOUSEEVENTF_LEFTDOWN
+            x, y = executor.win32api.GetCursorPos()
+            executor.win32api.mouse_event(flag, x, y, 0, 0)
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã giữ chuột.", remote_action=action)))
+
+        if action in {"mouse_up", "button_up"}:
+            executor.win32api.SetCursorPos(_remote_point(payload))
+            button = str(payload.get("button") or "left").strip().lower()
+            if button == "right":
+                flag = executor.win32con.MOUSEEVENTF_RIGHTUP
+            elif button == "middle":
+                flag = getattr(executor.win32con, "MOUSEEVENTF_MIDDLEUP", 0x0040)
+            else:
+                flag = executor.win32con.MOUSEEVENTF_LEFTUP
+            x, y = executor.win32api.GetCursorPos()
+            executor.win32api.mouse_event(flag, x, y, 0, 0)
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhả chuột.", remote_action=action)))
 
         if action == "move":
             width, height = _remote_screen_size()
@@ -689,14 +746,14 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             x = max(0, min(width - 1, int(round(cx + dx * scale))))
             y = max(0, min(height - 1, int(round(cy + dy * scale))))
             executor.win32api.SetCursorPos((x, y))
-            return mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action)))
 
         if action == "scroll":
             amount = int(max(-960, min(960, -_number(payload.get("deltaY"), 120.0))))
             if amount == 0:
                 amount = -120
             executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_WHEEL, 0, 0, amount, 0)
-            return mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action)))
 
         if action in {"key", "hotkey", "combo", "release_all"}:
             key_payload = {**payload}
@@ -716,7 +773,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             paste_result = executor.keyboard_control("paste")
             if paste_result.status == ActionStatus.ERROR:
                 return mobile_payload_from_result(paste_result)
-            return mobile_payload_from_result(ActionResult.ok("Đã nhập văn bản vào máy tính.", remote_action=action))
+            return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã nhập văn bản vào máy tính.", remote_action=action)))
 
         return _remote_error_payload("Thao tác điều khiển không hợp lệ.", code=ErrorCode.UNKNOWN)
     except Exception as exc:
@@ -1218,6 +1275,14 @@ class MobileRemoteBridge:
             return _permission_denied_payload("remote_desktop")
         return {"ok": True, "device": _public_device(device)}
 
+    def remote_cursor(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        return {"ok": True, "status": "success", "cursor": _remote_cursor_state(), "device": _public_device(device)}
+
     def handle_remote_input(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
@@ -1656,6 +1721,9 @@ class MobileRemoteBridge:
                     return
                 if parsed.path == "/api/remote/screen":
                     self._send_json(bridge.remote_screen(self._auth_key()))
+                    return
+                if parsed.path == "/api/remote/cursor":
+                    self._send_json(bridge.remote_cursor(self._auth_key()))
                     return
                 if parsed.path == "/api/remote/stream":
                     self._send_remote_stream(parsed)

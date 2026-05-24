@@ -649,6 +649,28 @@ def test_mobile_remote_desktop_serves_mjpeg_stream(tmp_path, monkeypatch):
         bridge.stop()
 
 
+def test_mobile_remote_desktop_serves_cursor_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "GetSystemMetrics", lambda index: 1200 if index == 0 else 800)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "GetCursorPos", lambda: (300, 400))
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+
+        payload = requests.get(f"{base}/api/remote/cursor", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+
+        assert payload["ok"] is True
+        assert payload["cursor"]["x"] == 300
+        assert payload["cursor"]["y"] == 400
+        assert payload["cursor"]["width"] == 1200
+        assert payload["cursor"]["height"] == 800
+    finally:
+        bridge.stop()
+
+
 def test_mobile_remote_desktop_tap_routes_mouse_input(tmp_path, monkeypatch):
     events: list[tuple[str, tuple[int, int] | int]] = []
     cursor = [0, 0]
@@ -683,6 +705,8 @@ def test_mobile_remote_desktop_tap_routes_mouse_input(tmp_path, monkeypatch):
         ).json()
 
         assert payload["status"] == "success"
+        assert payload["cursor"]["x"] == 250
+        assert payload["cursor"]["y"] == 250
         assert events[0] == ("pos", (250, 250))
         assert events[1:] == [
             ("mouse", mobile_remote_module.executor.win32con.MOUSEEVENTF_LEFTDOWN),
