@@ -659,6 +659,7 @@ def test_mobile_remote_desktop_capabilities_list_monitors(tmp_path, monkeypatch)
         ],
     )
     monkeypatch.setattr(mobile_remote_module, "_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(mobile_remote_module, "_webrtc_available", lambda: True)
 
     bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
     bridge.start(host="127.0.0.1", port=0)
@@ -671,9 +672,54 @@ def test_mobile_remote_desktop_capabilities_list_monitors(tmp_path, monkeypatch)
 
         assert payload["ok"] is True
         assert payload["streamTransports"]["h264"] is True
+        assert payload["streamTransports"]["webrtc"] is True
         assert [monitor["id"] for monitor in payload["monitors"]] == ["monitor-0", "monitor-1"]
     finally:
         bridge.stop()
+
+
+def test_mobile_remote_stop_remote_desktop_control_revokes_permission(tmp_path, monkeypatch):
+    events: list[str] = []
+    released: list[bool] = []
+    monkeypatch.setattr(mobile_remote_module, "_release_remote_inputs", lambda: released.append(True))
+
+    bridge = MobileRemoteBridge(
+        _FakeEngine(),
+        settings_store=_store(tmp_path, monkeypatch),
+        on_event=lambda event, _payload: events.append(event),
+    )
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+
+        result = bridge.stop_remote_desktop_control()
+
+        device = bridge.snapshot()["devices"][0]
+        assert result["ok"] is True
+        assert released == [True]
+        assert device["permissions"]["remote_desktop"] is False
+        assert bridge.remote_stream_auth(auth_key)["ok"] is False
+        assert "remote_control_stopped" in events
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_keyboard_hold_and_release_routes_to_executor(monkeypatch):
+    calls: list[tuple[str, object]] = []
+
+    def fake_keyboard_control(action: str, **kwargs):
+        calls.append((action, kwargs.get("keys")))
+        return mobile_remote_module.ActionResult.ok("ok")
+
+    monkeypatch.setattr(mobile_remote_module.executor, "keyboard_control", fake_keyboard_control)
+
+    hold = mobile_remote_module._remote_input_result({"action": "hold", "keys": ["ctrl"]})
+    release = mobile_remote_module._remote_input_result({"action": "release", "keys": ["ctrl"]})
+
+    assert hold["status"] == "success"
+    assert release["status"] == "success"
+    assert calls == [("hold", ["ctrl"]), ("release", ["ctrl"])]
 
 
 def test_mobile_remote_h264_command_targets_monitor(monkeypatch):

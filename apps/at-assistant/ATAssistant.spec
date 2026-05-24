@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import shutil
 from pathlib import Path
 
 import piper as piper_pkg
@@ -29,6 +30,16 @@ binaries += [
     (pywintypes.__file__, '.'),
     (pythoncom.__file__, '.'),
 ]
+ffmpeg_candidates = [
+    Path(os.environ.get('ChocolateyInstall', r'C:\ProgramData\chocolatey')) / 'lib' / 'ffmpeg' / 'tools' / 'ffmpeg' / 'bin' / 'ffmpeg.exe',
+]
+path_ffmpeg = shutil.which('ffmpeg')
+if path_ffmpeg:
+    ffmpeg_candidates.append(Path(path_ffmpeg))
+for ffmpeg_path in ffmpeg_candidates:
+    if ffmpeg_path.exists():
+        binaries.append((str(ffmpeg_path), 'bin'))
+        break
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('sherpa_onnx')
@@ -36,6 +47,10 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('_sounddevice_data')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('keyring')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('aiortc')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('av')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 piper_dir = Path(piper_pkg.__file__).resolve().parent
 for piper_data_dir in ('espeak-ng-data', 'tashkeel'):
@@ -77,7 +92,6 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        'av',
         'cv2',
         'llvmlite',
         'matplotlib',

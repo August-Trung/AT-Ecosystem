@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -13,6 +14,7 @@ import secrets
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 import unicodedata
@@ -25,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from src.core.app_paths import ensure_app_data_dir
+from src.core.app_paths import ensure_app_data_dir, resource_path
 from src.core.engine import Engine
 from src.core import executor
 from src.core.result import ActionResult, ActionStatus, ErrorCode
@@ -34,6 +36,15 @@ try:
     import psutil
 except Exception:  # pragma: no cover
     psutil = None
+
+try:
+    import av
+    from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+except Exception:  # pragma: no cover
+    av = None
+    RTCPeerConnection = None
+    RTCSessionDescription = None
+    VideoStreamTrack = None
 
 
 DEFAULT_REMOTE_HOST = "0.0.0.0"
@@ -544,7 +555,18 @@ def _ratio(value: Any, default: float = 0.5) -> float:
 
 
 def _ffmpeg_path() -> str:
+    for name in ("ffmpeg.exe", "ffmpeg"):
+        candidate = resource_path("bin", name, prefer_runtime=False)
+        if candidate.exists():
+            return str(candidate)
+        executable_candidate = Path(sys.executable).resolve().parent / "bin" / name
+        if executable_candidate.exists():
+            return str(executable_candidate)
     return shutil.which("ffmpeg") or ""
+
+
+def _webrtc_available() -> bool:
+    return bool(av is not None and RTCPeerConnection is not None and RTCSessionDescription is not None and VideoStreamTrack is not None)
 
 
 def _remote_monitors() -> list[dict[str, Any]]:
@@ -606,12 +628,11 @@ def _remote_monitor(monitor_id: Any = "") -> dict[str, Any]:
     return monitors[0]
 
 
-def _remote_screen_jpeg(
+def _remote_screen_image(
     *,
     max_width: int = REMOTE_SCREEN_MAX_WIDTH,
-    quality: int = REMOTE_SCREEN_JPEG_QUALITY,
     monitor_id: str = "",
-) -> tuple[bytes, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any]]:
     from PIL import Image, ImageGrab
 
     monitor = _remote_monitor(monitor_id)
@@ -621,17 +642,15 @@ def _remote_screen_jpeg(
         int(monitor["x"] + monitor["width"]),
         int(monitor["y"] + monitor["height"]),
     )
-    image = ImageGrab.grab(bbox=bbox)
+    image = ImageGrab.grab(bbox=bbox).convert("RGB")
     width, height = image.size
-    preview = image.convert("RGB")
+    preview = image
     if max_width > 0 and width > max_width:
         scale = max_width / float(width)
         preview_height = max(1, int(height * scale))
         resample_filter = getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1)
         preview = preview.resize((max_width, preview_height), resample_filter)
-    buffer = BytesIO()
-    preview.save(buffer, format="JPEG", quality=max(35, min(90, int(quality))), optimize=True)
-    return buffer.getvalue(), {
+    return preview, {
         "width": width,
         "height": height,
         "monitorId": monitor["id"],
@@ -639,6 +658,62 @@ def _remote_screen_jpeg(
         "previewHeight": preview.size[1],
         "capturedAt": _now_iso(),
     }
+
+
+def _remote_screen_jpeg(
+    *,
+    max_width: int = REMOTE_SCREEN_MAX_WIDTH,
+    quality: int = REMOTE_SCREEN_JPEG_QUALITY,
+    monitor_id: str = "",
+) -> tuple[bytes, dict[str, Any]]:
+    preview, meta = _remote_screen_image(max_width=max_width, monitor_id=monitor_id)
+    buffer = BytesIO()
+    preview.save(buffer, format="JPEG", quality=max(35, min(90, int(quality))), optimize=True)
+    return buffer.getvalue(), meta
+
+
+if VideoStreamTrack is not None:
+
+    class _RemoteDesktopVideoTrack(VideoStreamTrack):  # type: ignore[misc, valid-type]
+        kind = "video"
+
+        def __init__(self, *, monitor_id: str = "", fps: int = 15, max_width: int = REMOTE_SCREEN_MAX_WIDTH) -> None:
+            super().__init__()
+            self.monitor_id = str(monitor_id or "")
+            self.frame_delay = 1.0 / float(max(1, min(REMOTE_VIDEO_MAX_FPS, int(fps or 15))))
+            self.max_width = int(max(480, min(1920, max_width or REMOTE_SCREEN_MAX_WIDTH)))
+            self._next_frame_at = 0.0
+
+        async def recv(self):  # pragma: no cover - exercised by a real WebRTC client
+            pts, time_base = await self.next_timestamp()
+            now = time.monotonic()
+            if self._next_frame_at > now:
+                await asyncio.sleep(self._next_frame_at - now)
+            self._next_frame_at = time.monotonic() + self.frame_delay
+            image, _meta = _remote_screen_image(max_width=self.max_width, monitor_id=self.monitor_id)
+            frame = av.VideoFrame.from_image(image)
+            frame.pts = pts
+            frame.time_base = time_base
+            return frame
+else:
+    _RemoteDesktopVideoTrack = None  # type: ignore[assignment]
+
+
+def _release_remote_inputs() -> None:
+    try:
+        executor.keyboard_control("release_all")
+    except Exception:
+        pass
+    try:
+        x, y = executor.win32api.GetCursorPos()
+        for flag in (
+            executor.win32con.MOUSEEVENTF_LEFTUP,
+            executor.win32con.MOUSEEVENTF_RIGHTUP,
+            getattr(executor.win32con, "MOUSEEVENTF_MIDDLEUP", 0x0040),
+        ):
+            executor.win32api.mouse_event(flag, x, y, 0, 0)
+    except Exception:
+        pass
 
 
 def _remote_screen_snapshot(
@@ -743,6 +818,10 @@ def _mouse_click(button: str = "left") -> None:
 def _remote_keyboard_result(payload: dict[str, Any], action: str) -> ActionResult:
     raw_keys = payload.get("keys")
     key = str(payload.get("key") or payload.get("combo") or "").strip()
+    if action in {"hold", "key_down", "press_hold"}:
+        return executor.keyboard_control("hold", keys=raw_keys or key, duration_seconds=_number(payload.get("durationSeconds"), 0.0))
+    if action in {"release", "key_up"}:
+        return executor.keyboard_control("release", keys=raw_keys or key)
     if action in {"hotkey", "combo"} or raw_keys or "+" in key:
         if raw_keys is None:
             raw_keys = [item for item in re.split(r"[\s+]+", key) if item]
@@ -848,7 +927,7 @@ def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
             executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_WHEEL, 0, 0, amount, 0)
             return _with_remote_cursor(mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action)), monitor_id)
 
-        if action in {"key", "hotkey", "combo", "release_all"}:
+        if action in {"key", "hotkey", "combo", "hold", "key_down", "press_hold", "release", "key_up", "release_all"}:
             key_payload = {**payload}
             if action == "release_all":
                 key_payload["key"] = "release_all"
@@ -1175,6 +1254,9 @@ class MobileRemoteBridge:
         self._thread: threading.Thread | None = None
         self._bound_host = ""
         self._bound_port = 0
+        self._webrtc_loop: asyncio.AbstractEventLoop | None = None
+        self._webrtc_thread: threading.Thread | None = None
+        self._webrtc_peers: set[Any] = set()
 
     @property
     def is_running(self) -> bool:
@@ -1226,7 +1308,69 @@ class MobileRemoteBridge:
             server.server_close()
         if thread is not None:
             thread.join(timeout=2)
+        self._shutdown_webrtc()
         self._emit("stopped", self.snapshot())
+
+    def _run_webrtc_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_forever()
+        finally:
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.close()
+
+    def _ensure_webrtc_loop(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._webrtc_loop is not None and self._webrtc_thread is not None and self._webrtc_thread.is_alive():
+                return self._webrtc_loop
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(target=self._run_webrtc_loop, args=(loop,), daemon=True)
+            self._webrtc_loop = loop
+            self._webrtc_thread = thread
+            thread.start()
+            return loop
+
+    async def _close_webrtc_peer(self, peer: Any) -> None:
+        with self._lock:
+            self._webrtc_peers.discard(peer)
+        try:
+            await peer.close()
+        except Exception:
+            pass
+
+    async def _close_webrtc_peers(self) -> None:
+        with self._lock:
+            peers = list(self._webrtc_peers)
+            self._webrtc_peers.clear()
+        for peer in peers:
+            try:
+                await peer.close()
+            except Exception:
+                pass
+
+    def _shutdown_webrtc(self) -> None:
+        with self._lock:
+            loop = self._webrtc_loop
+            thread = self._webrtc_thread
+            self._webrtc_loop = None
+            self._webrtc_thread = None
+        if loop is None:
+            return
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._close_webrtc_peers(), loop)
+            future.result(timeout=2)
+        except Exception:
+            pass
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+        if thread is not None:
+            thread.join(timeout=2)
 
     def rotate_pair_code(self) -> str:
         with self._lock:
@@ -1403,6 +1547,32 @@ class MobileRemoteBridge:
         self._emit("device_permissions_changed", {"device": public})
         return {"ok": True, "device": public}
 
+    def stop_remote_desktop_control(self) -> dict[str, Any]:
+        changed_devices: list[dict[str, Any]] = []
+        with self._lock:
+            self._settings = self.settings_store.load()
+            devices = list(self._settings.get("paired_devices") or [])
+            for item in devices:
+                permissions = _normalize_permissions(item.get("permissions"))
+                if permissions.get("remote_desktop"):
+                    permissions["remote_desktop"] = False
+                    item["permissions"] = permissions
+                    changed_devices.append(_public_device(item))
+            if changed_devices:
+                self._settings["paired_devices"] = devices
+                self.settings_store.save(self._settings)
+        _release_remote_inputs()
+        self._shutdown_webrtc()
+        for device in changed_devices:
+            self._emit("device_permissions_changed", {"device": device})
+        self._emit("remote_control_stopped", {"devices": changed_devices, "at": _now_iso()})
+        return {
+            "ok": True,
+            "status": "success",
+            "message": "Đã dừng điều khiển từ điện thoại.",
+            "devices": changed_devices,
+        }
+
     def device_permissions(self, auth_key: str) -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
@@ -1439,8 +1609,8 @@ class MobileRemoteBridge:
             "streamTransports": {
                 "mjpeg": True,
                 "h264": bool(ffmpeg),
-                "webrtc": False,
-                "webrtcReason": "Chưa đóng gói aiortc/av trong desktop build; dùng H.264 fMP4 low-latency qua FFmpeg.",
+                "webrtc": _webrtc_available(),
+                "webrtcReason": "" if _webrtc_available() else "Desktop build chua co aiortc/av; dung H.264 fMP4 hoac MJPEG.",
             },
             "ffmpeg": bool(ffmpeg),
         }
@@ -1464,6 +1634,79 @@ class MobileRemoteBridge:
             return _permission_denied_payload("remote_desktop")
         self._remote_control_active(device, action)
         return {"ok": True, "device": _public_device(device)}
+
+    def remote_webrtc_offer(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Khong ket noi duoc voi may tinh."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        if not _webrtc_available() or _RemoteDesktopVideoTrack is None:
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "message": "WebRTC chua san sang trong desktop app nay.",
+            }
+        offer = payload.get("offer") if isinstance(payload.get("offer"), dict) else payload
+        sdp = str(offer.get("sdp") or "").strip()
+        offer_type = str(offer.get("type") or "offer").strip()
+        if not sdp:
+            return {"ok": False, "status": "error", "message": "Thieu SDP offer WebRTC."}
+        monitor_id = str(payload.get("monitorId") or offer.get("monitorId") or "").strip()
+        fps = int(max(4, min(REMOTE_VIDEO_MAX_FPS, _number(payload.get("fps") or offer.get("fps"), 15))))
+        max_width = int(max(640, min(1920, _number(payload.get("maxWidth") or offer.get("maxWidth"), REMOTE_SCREEN_MAX_WIDTH))))
+        self._remote_control_active(device, "webrtc_stream")
+        loop = self._ensure_webrtc_loop()
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._create_webrtc_answer(sdp=sdp, offer_type=offer_type, monitor_id=monitor_id, fps=fps, max_width=max_width),
+                loop,
+            )
+            payload_out = future.result(timeout=15)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": "error",
+                "message": f"Khong khoi tao duoc WebRTC: {exc}",
+            }
+        payload_out["device"] = _public_device(device)
+        return payload_out
+
+    async def _create_webrtc_answer(
+        self,
+        *,
+        sdp: str,
+        offer_type: str,
+        monitor_id: str,
+        fps: int,
+        max_width: int,
+    ) -> dict[str, Any]:
+        assert RTCPeerConnection is not None
+        assert RTCSessionDescription is not None
+        assert _RemoteDesktopVideoTrack is not None
+        peer = RTCPeerConnection()
+        with self._lock:
+            self._webrtc_peers.add(peer)
+
+        @peer.on("connectionstatechange")
+        async def on_connectionstatechange() -> None:
+            if peer.connectionState == "closed":
+                with self._lock:
+                    self._webrtc_peers.discard(peer)
+            elif peer.connectionState in {"failed", "disconnected"}:
+                await self._close_webrtc_peer(peer)
+
+        peer.addTrack(_RemoteDesktopVideoTrack(monitor_id=monitor_id, fps=fps, max_width=max_width))
+        await peer.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=offer_type))
+        answer = await peer.createAnswer()
+        await peer.setLocalDescription(answer)
+        local = peer.localDescription
+        return {
+            "ok": True,
+            "status": "success",
+            "answer": {"sdp": local.sdp, "type": local.type},
+            "transport": "webrtc",
+        }
 
     def remote_cursor(self, auth_key: str, *, monitor_id: str = "") -> dict[str, Any]:
         device = self._authenticate(auth_key)
@@ -1967,6 +2210,10 @@ class MobileRemoteBridge:
                 if parsed.path == "/api/share":
                     body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
                     self._send_json(bridge.handle_share(self._auth_key(), body))
+                    return
+                if parsed.path == "/api/remote/webrtc/offer":
+                    body = self._read_json(max_bytes=2 * 1024 * 1024)
+                    self._send_json(bridge.remote_webrtc_offer(self._auth_key(), body))
                     return
                 if parsed.path == "/api/remote/input":
                     body = self._read_json()

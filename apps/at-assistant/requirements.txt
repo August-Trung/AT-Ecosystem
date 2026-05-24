@@ -1,4 +1,6 @@
 customtkinter
+aiortc==1.14.0
+av==16.1.0
 google-api-python-client==2.186.0
 google-auth
 google-auth-httplib2==0.2.1

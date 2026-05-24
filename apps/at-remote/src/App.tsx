@@ -279,7 +279,8 @@ type RemoteCapabilitiesResponse = {
 };
 
 type RemoteStreamProfile = "smooth" | "balanced" | "sharp";
-type RemoteStreamTransport = "h264" | "mjpeg";
+type RemoteStreamTransport = "webrtc" | "h264" | "mjpeg";
+type RemoteModifierKey = "ctrl" | "alt" | "shift" | "win";
 
 type HealthPayload = {
   ok?: boolean;
@@ -2932,19 +2933,29 @@ function RemoteControlView({
   const [liveMode, setLiveMode] = useState(true);
   const [streamNonce, setStreamNonce] = useState(0);
   const [streamProfile, setStreamProfile] = useState<RemoteStreamProfile>("balanced");
-  const [streamTransport, setStreamTransport] = useState<RemoteStreamTransport>("h264");
+  const [streamTransport, setStreamTransport] = useState<RemoteStreamTransport>("webrtc");
+  const [adaptiveStream, setAdaptiveStream] = useState(true);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [webrtcAvailable, setWebrtcAvailable] = useState(false);
   const [h264Available, setH264Available] = useState(true);
   const [monitors, setMonitors] = useState<RemoteMonitor[]>([]);
   const [selectedMonitorId, setSelectedMonitorId] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [cursor, setCursor] = useState<RemoteCursorState | null>(null);
+  const [screenZoom, setScreenZoom] = useState(1);
+  const [screenPan, setScreenPan] = useState({ x: 0, y: 0 });
+  const [heldModifiers, setHeldModifiers] = useState<RemoteModifierKey[]>([]);
   const [touchSensitivity, setTouchSensitivity] = useState(1.8);
   const [message, setMessage] = useState("Chưa có khung hình");
   const [textDraft, setTextDraft] = useState("");
   const [lastPoint, setLastPoint] = useState({ xRatio: 0.5, yRatio: 0.5 });
   const loadingRef = useRef(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const screenStageRef = useRef<HTMLDivElement>(null);
+  const webrtcVideoRef = useRef<HTMLVideoElement>(null);
+  const webrtcPeerRef = useRef<RTCPeerConnection | null>(null);
+  const adaptiveProfileRef = useRef(0);
   const screenPointerRef = useRef<{
     clientX: number;
     clientY: number;
@@ -2963,6 +2974,11 @@ function RemoteControlView({
     startedAt: number;
     moved: boolean;
     lastSentAt: number;
+    startDistance: number;
+    startZoom: number;
+    startPanX: number;
+    startPanY: number;
+    mode?: "scroll" | "zoom" | "pan";
   } | null>(null);
   const twoFingerActiveRef = useRef(false);
   const touchpadRef = useRef<{ clientX: number; clientY: number; moved: boolean; lastSentAt: number } | null>(null);
@@ -2990,9 +3006,10 @@ function RemoteControlView({
     });
     return `${baseUrl}/api/remote/video?${params.toString()}`;
   }, [authKey, baseUrl, selectedMonitorId, streamNonce, streamProfile]);
+  const usingWebRTC = liveMode && streamTransport === "webrtc" && webrtcAvailable;
   const usingH264 = liveMode && streamTransport === "h264" && h264Available;
-  const screenImageSrc = liveMode && !usingH264 ? streamUrl : screen?.image || "";
-  const hasScreenMedia = usingH264 || Boolean(screenImageSrc);
+  const screenImageSrc = liveMode && !usingWebRTC && !usingH264 ? streamUrl : screen?.image || "";
+  const hasScreenMedia = usingWebRTC || usingH264 || Boolean(screenImageSrc);
   const remoteWidth = Math.max(1, screen?.width || cursor?.width || selectedMonitor?.width || 1);
   const remoteHeight = Math.max(1, screen?.height || cursor?.height || selectedMonitor?.height || 1);
   const remoteAspect = remoteWidth / remoteHeight;
@@ -3029,10 +3046,17 @@ function RemoteControlView({
         if (current && nextMonitors.some((monitor) => monitor.id === current)) return current;
         return nextMonitors.find((monitor) => monitor.isPrimary)?.id || nextMonitors[0]?.id || "";
       });
+      const canUseWebRTC = Boolean(data.streamTransports?.webrtc);
       const canUseH264 = Boolean(data.streamTransports?.h264);
+      setWebrtcAvailable(canUseWebRTC);
       setH264Available(canUseH264);
-      if (!canUseH264) setStreamTransport("mjpeg");
+      setStreamTransport((current) => {
+        if (current === "webrtc") return canUseWebRTC ? "webrtc" : canUseH264 ? "h264" : "mjpeg";
+        if (current === "h264") return canUseH264 ? "h264" : canUseWebRTC ? "webrtc" : "mjpeg";
+        return "mjpeg";
+      });
     } catch {
+      setWebrtcAvailable(false);
       setH264Available(false);
       setStreamTransport("mjpeg");
     }
@@ -3066,6 +3090,7 @@ function RemoteControlView({
 
   const loadCursor = useCallback(async () => {
     try {
+      const startedAt = performance.now();
       const params = new URLSearchParams({ monitorId: selectedMonitorId });
       const response = await requestJson<RemoteCursorResponse>(`${baseUrl}/api/remote/cursor?${params.toString()}`, {
         headers: { "X-AT-Remote-Key": authKey },
@@ -3073,11 +3098,24 @@ function RemoteControlView({
         readTimeout: 3500
       });
       const data = response.data;
-      if (response.ok && data.ok && data.cursor) setCursor(data.cursor);
+      if (response.ok && data.ok && data.cursor) {
+        const latency = Math.max(1, Math.round(performance.now() - startedAt));
+        setLatencyMs(latency);
+        setCursor(data.cursor);
+        if (adaptiveStream && liveMode && Date.now() - adaptiveProfileRef.current > 6500) {
+          const nextProfile: RemoteStreamProfile = latency > 420 ? "smooth" : latency > 180 ? "balanced" : "sharp";
+          setStreamProfile((current) => {
+            if (current === nextProfile) return current;
+            adaptiveProfileRef.current = Date.now();
+            setStreamNonce((value) => value + 1);
+            return nextProfile;
+          });
+        }
+      }
     } catch {
       // Cursor polling is best-effort; stream/input errors are surfaced elsewhere.
     }
-  }, [authKey, baseUrl, selectedMonitorId]);
+  }, [adaptiveStream, authKey, baseUrl, liveMode, selectedMonitorId]);
 
   const sendRemoteInput = useCallback(
     async (payload: Record<string, unknown>, refresh = true) => {
@@ -3105,6 +3143,11 @@ function RemoteControlView({
     [authKey, baseUrl, liveMode, loadScreen, onToast, selectedMonitorId]
   );
 
+  const releaseAllKeys = useCallback(() => {
+    setHeldModifiers([]);
+    void sendRemoteInput({ action: "release_all" }, false);
+  }, [sendRemoteInput]);
+
   useEffect(() => {
     void loadCapabilities();
   }, [loadCapabilities]);
@@ -3120,6 +3163,106 @@ function RemoteControlView({
     }, focusMode ? 350 : liveMode ? 700 : 1200);
     return () => window.clearInterval(interval);
   }, [focusMode, liveMode, loadCursor]);
+
+  const closeWebRTCPeer = useCallback(() => {
+    const peer = webrtcPeerRef.current;
+    webrtcPeerRef.current = null;
+    if (peer) peer.close();
+    const video = webrtcVideoRef.current;
+    if (video) video.srcObject = null;
+  }, []);
+
+  const waitForIceGathering = (peer: RTCPeerConnection) =>
+    new Promise<void>((resolve) => {
+      if (peer.iceGatheringState === "complete") {
+        resolve();
+        return;
+      }
+      const timeout = window.setTimeout(() => {
+        peer.removeEventListener("icegatheringstatechange", handleChange);
+        resolve();
+      }, 1600);
+      function handleChange() {
+        if (peer.iceGatheringState !== "complete") return;
+        window.clearTimeout(timeout);
+        peer.removeEventListener("icegatheringstatechange", handleChange);
+        resolve();
+      }
+      peer.addEventListener("icegatheringstatechange", handleChange);
+    });
+
+  useEffect(() => {
+    if (!usingWebRTC) {
+      closeWebRTCPeer();
+      return;
+    }
+    let cancelled = false;
+    closeWebRTCPeer();
+    const profile = REMOTE_STREAM_PROFILES[streamProfile];
+
+    const startWebRTC = async () => {
+      try {
+        const peer = new RTCPeerConnection({ iceServers: [] });
+        webrtcPeerRef.current = peer;
+        peer.addTransceiver("video", { direction: "recvonly" });
+        peer.ontrack = (event) => {
+          const video = webrtcVideoRef.current;
+          if (!video || cancelled) return;
+          video.srcObject = event.streams[0] || new MediaStream([event.track]);
+          void video.play().catch(() => undefined);
+          setMessage("WebRTC live stream dang chay");
+        };
+        peer.onconnectionstatechange = () => {
+          if (cancelled) return;
+          if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+            setMessage("WebRTC mat ket noi. Dang chuyen transport.");
+            setWebrtcAvailable(false);
+            setStreamTransport(h264Available ? "h264" : "mjpeg");
+            setStreamNonce((value) => value + 1);
+          }
+        };
+        const offer = await peer.createOffer();
+        await peer.setLocalDescription(offer);
+        await waitForIceGathering(peer);
+        const local = peer.localDescription;
+        if (!local) throw new Error("missing local description");
+        const response = await requestJson<{ ok?: boolean; message?: string; answer?: RTCSessionDescriptionInit }>(
+          `${baseUrl}/api/remote/webrtc/offer`,
+          {
+            method: "POST",
+            headers: { "X-AT-Remote-Key": authKey },
+            data: {
+              offer: { sdp: local.sdp, type: local.type },
+              monitorId: selectedMonitorId,
+              fps: profile.h264Fps,
+              maxWidth: profile.maxWidth
+            },
+            connectTimeout: 4500,
+            readTimeout: 12000
+          }
+        );
+        if (cancelled) return;
+        if (!response.ok || !response.data.ok || !response.data.answer) {
+          throw new Error(response.data.message || friendlyFetchError());
+        }
+        await peer.setRemoteDescription(response.data.answer);
+        setMessage("WebRTC live stream dang chay");
+      } catch (error) {
+        if (cancelled) return;
+        const text = friendlyConnectionError(error);
+        setMessage(text);
+        setWebrtcAvailable(false);
+        setStreamTransport(h264Available ? "h264" : "mjpeg");
+        setStreamNonce((value) => value + 1);
+      }
+    };
+
+    void startWebRTC();
+    return () => {
+      cancelled = true;
+      closeWebRTCPeer();
+    };
+  }, [authKey, baseUrl, closeWebRTCPeer, h264Available, selectedMonitorId, streamNonce, streamProfile, usingWebRTC]);
 
   const lockLandscape = useCallback(async () => {
     if (Capacitor.isNativePlatform()) {
@@ -3166,13 +3309,14 @@ function RemoteControlView({
 
   const exitFocusMode = useCallback(async () => {
     setFocusMode(false);
+    releaseAllKeys();
     unlockOrientation();
     try {
       if (document.fullscreenElement) await document.exitFullscreen?.();
     } catch {
       // Ignore browser-specific fullscreen exit failures.
     }
-  }, [unlockOrientation]);
+  }, [releaseAllKeys, unlockOrientation]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -3180,13 +3324,14 @@ function RemoteControlView({
       setIsFullscreen(active);
       if (!active) {
         setFocusMode(false);
+        releaseAllKeys();
         unlockOrientation();
       }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     handleFullscreenChange();
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, [unlockOrientation]);
+  }, [releaseAllKeys, unlockOrientation]);
 
   const pointFromClient = (element: HTMLElement, clientX: number, clientY: number) => {
     const rect = element.getBoundingClientRect();
@@ -3197,6 +3342,32 @@ function RemoteControlView({
   };
 
   const pointFromMediaEvent = (event: PointerEvent<HTMLElement>) => pointFromClient(event.currentTarget, event.clientX, event.clientY);
+
+  const clampScreenPan = useCallback((pan: { x: number; y: number }, zoomValue: number) => {
+    const rect = screenStageRef.current?.getBoundingClientRect();
+    const width = rect?.width || window.innerWidth;
+    const height = rect?.height || window.innerHeight;
+    const maxX = (width * Math.max(0, zoomValue - 1)) / 2;
+    const maxY = (height * Math.max(0, zoomValue - 1)) / 2;
+    return {
+      x: Math.max(-maxX, Math.min(maxX, pan.x)),
+      y: Math.max(-maxY, Math.min(maxY, pan.y))
+    };
+  }, []);
+
+  const setClampedZoom = useCallback(
+    (nextZoom: number, nextPan = screenPan) => {
+      const zoomValue = Math.max(1, Math.min(3, nextZoom));
+      setScreenZoom(zoomValue);
+      setScreenPan(zoomValue <= 1 ? { x: 0, y: 0 } : clampScreenPan(nextPan, zoomValue));
+    },
+    [clampScreenPan, screenPan]
+  );
+
+  useEffect(() => {
+    setScreenZoom(1);
+    setScreenPan({ x: 0, y: 0 });
+  }, [selectedMonitorId]);
 
   const clearScreenHoldTimer = () => {
     const current = screenPointerRef.current;
@@ -3332,6 +3503,9 @@ function RemoteControlView({
     clientY: (touches[0].clientY + touches[1].clientY) / 2
   });
 
+  const twoFingerDistance = (touches: { [index: number]: { clientX: number; clientY: number } }) =>
+    Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
   const handleScreenTouchStart = (event: TouchEvent<HTMLElement>) => {
     if (event.touches.length !== 2) return;
     event.preventDefault();
@@ -3348,7 +3522,11 @@ function RemoteControlView({
       ...point,
       startedAt: Date.now(),
       moved: false,
-      lastSentAt: 0
+      lastSentAt: 0,
+      startDistance: twoFingerDistance(event.touches),
+      startZoom: screenZoom,
+      startPanX: screenPan.x,
+      startPanY: screenPan.y
     };
   };
 
@@ -3360,12 +3538,31 @@ function RemoteControlView({
     const dy = center.clientY - gesture.centerY;
     const dx = center.clientX - gesture.centerX;
     const distance = Math.hypot(dx, dy);
+    const pinchDistance = twoFingerDistance(event.touches);
+    const pinchDelta = Math.abs(pinchDistance - gesture.startDistance);
     const point = pointFromClient(event.currentTarget, center.clientX, center.clientY);
     setLastPoint(point);
     updateLocalCursorFromPoint(point);
     if (distance > 4) gesture.moved = true;
+    if (pinchDelta > 10 || gesture.mode === "zoom") {
+      gesture.mode = "zoom";
+      gesture.moved = true;
+      const nextZoom = gesture.startZoom * (pinchDistance / Math.max(1, gesture.startDistance));
+      setClampedZoom(nextZoom, {
+        x: gesture.startPanX + (center.clientX - gesture.centerX),
+        y: gesture.startPanY + (center.clientY - gesture.centerY)
+      });
+      return;
+    }
+    if (screenZoom > 1.01 || gesture.mode === "pan") {
+      gesture.mode = "pan";
+      gesture.moved = true;
+      setScreenPan(clampScreenPan({ x: gesture.startPanX + dx, y: gesture.startPanY + dy }, screenZoom));
+      return;
+    }
     const now = Date.now();
     if (Math.abs(dy) >= 4 && now - gesture.lastSentAt >= 45) {
+      gesture.mode = "scroll";
       gesture.centerX = center.clientX;
       gesture.centerY = center.clientY;
       gesture.xRatio = point.xRatio;
@@ -3387,7 +3584,7 @@ function RemoteControlView({
       twoFingerActiveRef.current = false;
     }, 80);
     const elapsed = Date.now() - gesture.startedAt;
-    if (!gesture.moved && elapsed < 280) {
+    if (!gesture.mode && !gesture.moved && elapsed < 280) {
       void sendRemoteInput({ action: "right_tap", xRatio: gesture.xRatio, yRatio: gesture.yRatio });
     }
   };
@@ -3436,6 +3633,12 @@ function RemoteControlView({
     void sendRemoteInput({ action: "text", text });
   };
 
+  const toggleModifier = (key: RemoteModifierKey) => {
+    const active = heldModifiers.includes(key);
+    setHeldModifiers((current) => (active ? current.filter((item) => item !== key) : [...current, key]));
+    void sendRemoteInput({ action: active ? "release" : "hold", keys: [key] }, false);
+  };
+
   const shortcuts: Array<{ label: string; payload: Record<string, unknown> }> = [
     { label: "Esc", payload: { action: "key", key: "escape" } },
     { label: "Enter", payload: { action: "key", key: "enter" } },
@@ -3446,9 +3649,21 @@ function RemoteControlView({
     { label: "Backspace", payload: { action: "key", key: "backspace" } },
     { label: "Delete", payload: { action: "key", key: "delete" } }
   ];
+  const focusShortcuts: Array<{ label: string; payload: Record<string, unknown> }> = [
+    { label: "Esc", payload: { action: "key", key: "escape" } },
+    { label: "Tab", payload: { action: "key", key: "tab" } },
+    { label: "Enter", payload: { action: "key", key: "enter" } },
+    { label: "Back", payload: { action: "key", key: "backspace" } },
+    { label: "Del", payload: { action: "key", key: "delete" } },
+    { label: "Ctrl A", payload: { action: "hotkey", keys: ["ctrl", "a"] } },
+    { label: "Alt Tab", payload: { action: "hotkey", keys: ["alt", "tab"] } },
+    { label: "Win D", payload: { action: "hotkey", keys: ["win", "d"] } }
+  ];
   const remoteViewportStyle = {
     "--remote-aspect": String(remoteAspect),
-    aspectRatio: `${remoteWidth} / ${remoteHeight}`
+    aspectRatio: `${remoteWidth} / ${remoteHeight}`,
+    transform: `translate3d(${screenPan.x}px, ${screenPan.y}px, 0) scale(${screenZoom})`,
+    transformOrigin: "center center"
   } as Record<string, string>;
 
   return (
@@ -3470,6 +3685,13 @@ function RemoteControlView({
           {focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           {focusMode ? "Thu gọn" : "Màn lớn"}
         </button>
+        <button type="button" className="secondary-button icon-only" onClick={() => setClampedZoom(screenZoom - 0.25)} aria-label="Zoom out">
+          <ZoomOut size={16} />
+        </button>
+        <span className="remote-zoom-value">{Math.round(screenZoom * 100)}%</span>
+        <button type="button" className="secondary-button icon-only" onClick={() => setClampedZoom(screenZoom + 0.25)} aria-label="Zoom in">
+          <ZoomIn size={16} />
+        </button>
       </div>
 
       <section className="remote-control-settings">
@@ -3484,6 +3706,7 @@ function RemoteControlView({
               type="button"
               className={streamProfile === profileKey ? "selected" : ""}
               onClick={() => {
+                setAdaptiveStream(false);
                 setStreamProfile(profileKey);
                 setStreamNonce((value) => value + 1);
               }}
@@ -3492,7 +3715,24 @@ function RemoteControlView({
             </button>
           ))}
         </div>
+        <div className="remote-adaptive-row">
+          <button type="button" className={adaptiveStream ? "selected" : ""} onClick={() => setAdaptiveStream((value) => !value)}>
+            Auto
+          </button>
+          <span>{latencyMs ? `${latencyMs} ms` : "Latency"}</span>
+        </div>
         <div className="remote-transport-toggle" aria-label="Kiểu stream">
+          <button
+            type="button"
+            className={streamTransport === "webrtc" ? "selected" : ""}
+            disabled={!webrtcAvailable}
+            onClick={() => {
+              setStreamTransport("webrtc");
+              setStreamNonce((value) => value + 1);
+            }}
+          >
+            WebRTC
+          </button>
           <button
             type="button"
             className={streamTransport === "h264" ? "selected" : ""}
@@ -3553,12 +3793,32 @@ function RemoteControlView({
             <span>Màn hình laptop</span>
             <strong>{`${remoteWidth} x ${remoteHeight}`}</strong>
           </div>
-          <small>{liveMode ? (usingH264 ? "H.264" : isFullscreen ? "Fullscreen" : "MJPEG") : "Manual"}</small>
+          <small>{liveMode ? (usingWebRTC ? "WebRTC" : usingH264 ? "H.264" : isFullscreen ? "Fullscreen" : "MJPEG") : "Manual"}</small>
         </div>
-        <div className={`remote-screen-stage ${hasScreenMedia ? "" : "empty"}`} style={{ aspectRatio: `${remoteWidth} / ${remoteHeight}` }}>
+        <div
+          ref={screenStageRef}
+          className={`remote-screen-stage ${hasScreenMedia ? "" : "empty"}`}
+          style={{ aspectRatio: `${remoteWidth} / ${remoteHeight}` }}
+        >
           {hasScreenMedia ? (
             <div className="remote-screen-viewport" style={remoteViewportStyle}>
-              {usingH264 ? (
+              {usingWebRTC ? (
+                <video
+                  ref={webrtcVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  draggable={false}
+                  onLoadedData={() => setMessage("WebRTC live stream đang chạy")}
+                  onPointerDown={handleScreenPointerDown}
+                  onPointerMove={handleScreenPointerMove}
+                  onPointerUp={handleScreenPointerUp}
+                  onPointerCancel={handleScreenPointerCancel}
+                  onTouchStart={handleScreenTouchStart}
+                  onTouchMove={handleScreenTouchMove}
+                  onTouchEnd={handleScreenTouchEnd}
+                />
+              ) : usingH264 ? (
                 <video
                   key={videoUrl}
                   src={videoUrl}
@@ -3618,6 +3878,36 @@ function RemoteControlView({
               <strong>Chưa có khung hình</strong>
             </div>
           )}
+        </div>
+        <div className="remote-focus-keybar">
+          <div className="remote-modifier-row">
+            {(["ctrl", "alt", "shift", "win"] as RemoteModifierKey[]).map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={heldModifiers.includes(key) ? "selected" : ""}
+                onClick={() => toggleModifier(key)}
+              >
+                {key.toUpperCase()}
+              </button>
+            ))}
+            <button type="button" onClick={releaseAllKeys}>
+              Release
+            </button>
+          </div>
+          <div className="remote-focus-shortcuts">
+            {focusShortcuts.map((item) => (
+              <button key={item.label} type="button" onClick={() => void sendRemoteInput(item.payload, false)}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <form className="remote-focus-type" onSubmit={submitText}>
+            <input value={textDraft} onChange={(event) => setTextDraft(event.target.value)} placeholder="Text" />
+            <button type="submit" disabled={!textDraft.trim()}>
+              <Clipboard size={14} />
+            </button>
+          </form>
         </div>
         <div className="remote-status-row">
           <span>{message}</span>

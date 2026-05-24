@@ -2169,6 +2169,9 @@ class ATAssistantApp(ctk.CTk):
                 )
             elif event == "remote_control_active":
                 self._show_remote_control_indicator(payload)
+            elif event == "remote_control_stopped":
+                self._hide_remote_control_indicator()
+                self.chat.add_system_message("Da dung dieu khien tu dien thoai.")
             elif event == "file_received":
                 file_info = payload.get("file") if isinstance(payload.get("file"), dict) else {}
                 name = str(file_info.get("name") or Path(str(payload.get("path") or "")).name or "tệp")
@@ -2234,14 +2237,28 @@ class ATAssistantApp(ctk.CTk):
                 anchor="w",
             )
             title.pack(fill="x", padx=14, pady=(10, 2))
+            row = ctk.CTkFrame(frame, fg_color="transparent")
+            row.pack(fill="x", padx=14, pady=(0, 10))
             detail = ctk.CTkLabel(
-                frame,
+                row,
                 text="",
                 text_color="#bbf7d0",
                 font=(FONT_FAMILY, FONT_SIZE_SMALL),
                 anchor="w",
             )
-            detail.pack(fill="x", padx=14, pady=(0, 10))
+            detail.pack(side="left", fill="x", expand=True)
+            stop_button = ctk.CTkButton(
+                row,
+                text="Dừng",
+                width=76,
+                height=28,
+                fg_color="#dc2626",
+                hover_color="#b91c1c",
+                text_color="#ffffff",
+                font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"),
+                command=self._stop_remote_desktop_control_from_indicator,
+            )
+            stop_button.pack(side="right", padx=(10, 0))
             self._remote_control_indicator = indicator
             self._remote_control_indicator_title = title
             self._remote_control_indicator_detail = detail
@@ -2256,7 +2273,7 @@ class ATAssistantApp(ctk.CTk):
         if indicator is None:
             return
         indicator.update_idletasks()
-        width = max(300, indicator.winfo_reqwidth())
+        width = max(360, indicator.winfo_reqwidth())
         height = max(58, indicator.winfo_reqheight())
         x = max(12, self.winfo_screenwidth() - width - 18)
         y = 18
@@ -2270,7 +2287,14 @@ class ATAssistantApp(ctk.CTk):
                 self._after_ids.discard(self._remote_control_indicator_hide_after)
             except Exception:
                 pass
-        self._remote_control_indicator_hide_after = self._safe_after(5000, self._hide_remote_control_indicator)
+        self._remote_control_indicator_hide_after = self._safe_after(12000, self._hide_remote_control_indicator)
+
+    def _stop_remote_desktop_control_from_indicator(self) -> None:
+        try:
+            self._mobile_remote_bridge.stop_remote_desktop_control()
+        except Exception as exc:
+            self.chat.add_bot_message(f"Khong dung duoc dieu khien tu dien thoai: {exc}", style="error")
+        self._hide_remote_control_indicator()
 
     def _hide_remote_control_indicator(self) -> None:
         self._remote_control_indicator_hide_after = None
