@@ -19,12 +19,17 @@ import {
   Hash,
   History,
   Home,
+  Keyboard,
   KeyRound,
   Laptop,
   Mail,
+  Maximize2,
   Menu,
   MessageCircle,
+  Minimize2,
   MonitorSmartphone,
+  MousePointer2,
+  MousePointerClick,
   Paperclip,
   Plus,
   QrCode,
@@ -38,6 +43,7 @@ import {
   Share2,
   Shield,
   ShieldCheck,
+  SlidersHorizontal,
   Smartphone,
   Trash2,
   WifiOff,
@@ -46,11 +52,11 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ConnectionStep = "checking" | "connect" | "pending" | "connected";
 type MessageRole = "user" | "assistant";
-type AppView = "home" | "chat" | "files" | "permissions" | "commands" | "expenses";
+type AppView = "home" | "chat" | "files" | "permissions" | "commands" | "expenses" | "control";
 type BillKind = "rent" | "electricity" | "water" | "other";
 type BillMode = "fixed" | "metered";
 
@@ -202,6 +208,30 @@ type ImageViewerState = {
   file?: RemoteFile;
 };
 
+type RemoteScreenFrame = {
+  image: string;
+  width: number;
+  height: number;
+  previewWidth?: number;
+  previewHeight?: number;
+  capturedAt?: string;
+};
+
+type RemoteScreenResponse = {
+  ok?: boolean;
+  status?: string;
+  message?: string;
+  screen?: RemoteScreenFrame;
+};
+
+type RemoteInputResponse = {
+  ok?: boolean;
+  status?: string;
+  message?: string;
+};
+
+type RemoteStreamProfile = "smooth" | "balanced" | "sharp";
+
 type HealthPayload = {
   ok?: boolean;
   name?: string;
@@ -248,6 +278,11 @@ const MAX_STORED_COMMANDS = 36;
 const MAX_COMMAND_SUGGESTIONS = 6;
 const BRAND_INTRO_HOLD_MS = 920;
 const BRAND_INTRO_FADE_MS = 260;
+const REMOTE_STREAM_PROFILES: Record<RemoteStreamProfile, { label: string; fps: number; maxWidth: number; quality: number }> = {
+  smooth: { label: "Mượt", fps: 6, maxWidth: 960, quality: 52 },
+  balanced: { label: "Cân bằng", fps: 5, maxWidth: 1280, quality: 62 },
+  sharp: { label: "Nét", fps: 3, maxWidth: 1600, quality: 74 }
+};
 
 const ShareReceiver = registerPlugin<{
   getSharedPayload: () => Promise<SharedPayload>;
@@ -1107,6 +1142,12 @@ const clearConnection = () => {
 const newId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const timeLabel = () => new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+
+const shortTimeLabel = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+};
 
 const fileToBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -2275,15 +2316,17 @@ function App() {
       ? "Trang chủ"
       : view === "chat"
         ? "Chat"
-        : view === "files"
-      ? "Tệp đã gửi"
-      : view === "permissions"
-        ? "Quyền điều khiển"
-        : view === "commands"
-          ? "Lệnh của tôi"
-          : view === "expenses"
-            ? "Thu chi"
-            : "Kết quả";
+        : view === "control"
+          ? "Điều khiển"
+          : view === "files"
+            ? "Tệp đã gửi"
+            : view === "permissions"
+              ? "Quyền điều khiển"
+              : view === "commands"
+                ? "Lệnh của tôi"
+                : view === "expenses"
+                  ? "Thu chi"
+                  : "Kết quả";
 
   const brandIntro = showBrandIntro ? <BrandIntro leaving={brandIntroLeaving} /> : null;
   const discoveryOverlay = discovering && step !== "connected" ? <DiscoveryOverlay /> : null;
@@ -2438,6 +2481,13 @@ function App() {
               setView(next);
             }}
             onRefreshStatus={() => void refreshSystemStatus()}
+          />
+        ) : view === "control" && connection ? (
+          <RemoteControlView
+            baseUrl={connection.baseUrl}
+            authKey={connection.authKey}
+            onBack={() => setView("home")}
+            onToast={showToast}
           />
         ) : view === "expenses" ? (
           <ExpensesView
@@ -2751,6 +2801,7 @@ function HomeView({
     icon: typeof Mail;
     tone: string;
   }> = [
+    { view: "control", label: "Điều khiển", metric: "Màn hình", icon: MonitorSmartphone, tone: "control" },
     { view: "chat", label: "Chat", metric: lastCommand ? "Có lịch sử" : "Mới", icon: MessageCircle, tone: "chat" },
     { view: "expenses", label: "Thu chi", metric: moneyLabel(expenseSummary.unpaid), icon: ReceiptText, tone: "expenses" },
     { view: "commands", label: "Lệnh", metric: "Macro", icon: Repeat2, tone: "commands" },
@@ -2804,6 +2855,358 @@ function HomeView({
         <span>Gần nhất</span>
         <strong>{lastCommand || "Chưa có lệnh"}</strong>
       </div>
+    </div>
+  );
+}
+
+function RemoteControlView({
+  baseUrl,
+  authKey,
+  onBack,
+  onToast
+}: {
+  baseUrl: string;
+  authKey: string;
+  onBack: () => void;
+  onToast: (text: string, tone?: ToastState["tone"]) => void;
+}) {
+  const [screen, setScreen] = useState<RemoteScreenFrame | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [liveMode, setLiveMode] = useState(true);
+  const [streamNonce, setStreamNonce] = useState(0);
+  const [streamProfile, setStreamProfile] = useState<RemoteStreamProfile>("balanced");
+  const [focusMode, setFocusMode] = useState(false);
+  const [touchSensitivity, setTouchSensitivity] = useState(1.8);
+  const [message, setMessage] = useState("Chưa có khung hình");
+  const [textDraft, setTextDraft] = useState("");
+  const [lastPoint, setLastPoint] = useState({ xRatio: 0.5, yRatio: 0.5 });
+  const loadingRef = useRef(false);
+  const screenPointerRef = useRef<{
+    clientX: number;
+    clientY: number;
+    xRatio: number;
+    yRatio: number;
+  } | null>(null);
+  const touchpadRef = useRef<{ clientX: number; clientY: number; moved: boolean; lastSentAt: number } | null>(null);
+  const streamUrl = useMemo(() => {
+    const profile = REMOTE_STREAM_PROFILES[streamProfile];
+    const params = new URLSearchParams({
+      key: authKey,
+      fps: String(profile.fps),
+      maxWidth: String(profile.maxWidth),
+      quality: String(profile.quality),
+      v: String(streamNonce)
+    });
+    return `${baseUrl}/api/remote/stream?${params.toString()}`;
+  }, [authKey, baseUrl, streamNonce, streamProfile]);
+  const screenImageSrc = liveMode ? streamUrl : screen?.image || "";
+  const hasScreenImage = Boolean(screenImageSrc);
+
+  const loadScreen = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setBusy(true);
+    try {
+      const response = await requestJson<RemoteScreenResponse>(`${baseUrl}/api/remote/screen`, {
+        headers: { "X-AT-Remote-Key": authKey },
+        connectTimeout: 4000,
+        readTimeout: 12000
+      });
+      const data = response.data;
+      if (!response.ok || !data.ok || !data.screen) throw new Error(data.message || friendlyFetchError());
+      setScreen(data.screen);
+      setMessage(data.message || "Đã cập nhật màn hình");
+    } catch (error) {
+      const text = friendlyConnectionError(error);
+      setMessage(text);
+      setLiveMode(false);
+    } finally {
+      loadingRef.current = false;
+      setBusy(false);
+    }
+  }, [authKey, baseUrl]);
+
+  const sendRemoteInput = useCallback(
+    async (payload: Record<string, unknown>, refresh = true) => {
+      try {
+        const response = await requestJson<RemoteInputResponse>(`${baseUrl}/api/remote/input`, {
+          method: "POST",
+          headers: { "X-AT-Remote-Key": authKey },
+          data: payload,
+          connectTimeout: 3500,
+          readTimeout: 8000
+        });
+        const data = response.data;
+        if (!response.ok || data.status === "error" || data.status === "unauthorized") {
+          throw new Error(data.message || friendlyFetchError());
+        }
+        setMessage(data.message || "Đã gửi thao tác");
+        if (refresh && !liveMode) window.setTimeout(() => void loadScreen(), 180);
+      } catch (error) {
+        const text = friendlyConnectionError(error);
+        setMessage(text);
+        onToast(text, "error");
+      }
+    },
+    [authKey, baseUrl, liveMode, loadScreen, onToast]
+  );
+
+  useEffect(() => {
+    void loadScreen();
+  }, [loadScreen]);
+
+  const pointFromImageEvent = (event: PointerEvent<HTMLImageElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      xRatio: Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))),
+      yRatio: Math.max(0, Math.min(1, (event.clientY - rect.top) / Math.max(1, rect.height)))
+    };
+  };
+
+  const toggleLive = () => {
+    if (liveMode) {
+      setLiveMode(false);
+      void loadScreen();
+      return;
+    }
+    setStreamNonce((value) => value + 1);
+    setLiveMode(true);
+    setMessage("Live stream đang chạy");
+  };
+
+  const refreshScreen = () => {
+    if (liveMode) {
+      setStreamNonce((value) => value + 1);
+      setMessage("Đang nối lại live stream");
+      return;
+    }
+    void loadScreen();
+  };
+
+  const handleScreenPointerDown = (event: PointerEvent<HTMLImageElement>) => {
+    const point = pointFromImageEvent(event);
+    screenPointerRef.current = {
+      ...point,
+      clientX: event.clientX,
+      clientY: event.clientY
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleScreenPointerUp = (event: PointerEvent<HTMLImageElement>) => {
+    const start = screenPointerRef.current;
+    screenPointerRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    const end = pointFromImageEvent(event);
+    setLastPoint(end);
+    if (!start) {
+      void sendRemoteInput({ action: "tap", ...end });
+      return;
+    }
+    const distance = Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY);
+    if (distance > 14) {
+      void sendRemoteInput({ action: "drag", fromXRatio: start.xRatio, fromYRatio: start.yRatio, ...end });
+      return;
+    }
+    void sendRemoteInput({ action: "tap", ...end });
+  };
+
+  const handleTouchpadDown = (event: PointerEvent<HTMLDivElement>) => {
+    touchpadRef.current = { clientX: event.clientX, clientY: event.clientY, moved: false, lastSentAt: 0 };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleTouchpadMove = (event: PointerEvent<HTMLDivElement>) => {
+    const current = touchpadRef.current;
+    if (!current) return;
+    const dx = event.clientX - current.clientX;
+    const dy = event.clientY - current.clientY;
+    if (Math.hypot(dx, dy) < 1.5) return;
+    const now = Date.now();
+    if (now - current.lastSentAt < 45) return;
+    current.clientX = event.clientX;
+    current.clientY = event.clientY;
+    current.moved = true;
+    current.lastSentAt = now;
+    void sendRemoteInput({ action: "move", dx, dy, scale: touchSensitivity }, false);
+  };
+
+  const handleTouchpadUp = (event: PointerEvent<HTMLDivElement>) => {
+    const start = touchpadRef.current;
+    touchpadRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!start) return;
+    if (!start.moved) {
+      void sendRemoteInput({ action: "tap", ...lastPoint });
+    }
+  };
+
+  const sendAtLastPoint = (action: "right_tap" | "double_tap") => {
+    void sendRemoteInput({ action, ...lastPoint });
+  };
+
+  const submitText = (event: FormEvent) => {
+    event.preventDefault();
+    const text = textDraft.trim();
+    if (!text) return;
+    setTextDraft("");
+    void sendRemoteInput({ action: "text", text });
+  };
+
+  const shortcuts: Array<{ label: string; payload: Record<string, unknown> }> = [
+    { label: "Esc", payload: { action: "key", key: "escape" } },
+    { label: "Enter", payload: { action: "key", key: "enter" } },
+    { label: "Tab", payload: { action: "key", key: "tab" } },
+    { label: "Ctrl A", payload: { action: "hotkey", keys: ["ctrl", "a"] } },
+    { label: "Copy", payload: { action: "key", key: "copy" } },
+    { label: "Paste", payload: { action: "key", key: "paste" } },
+    { label: "Backspace", payload: { action: "key", key: "backspace" } },
+    { label: "Delete", payload: { action: "key", key: "delete" } }
+  ];
+
+  return (
+    <div className={`remote-control-panel ${focusMode ? "focus-mode" : ""}`}>
+      <div className="panel-toolbar">
+        <button type="button" className="secondary-button" onClick={onBack}>
+          <ChevronRight size={16} />
+          Trang chủ
+        </button>
+        <button type="button" className={liveMode ? "danger-soft-button" : "secondary-button"} onClick={toggleLive}>
+          <MonitorSmartphone size={16} />
+          {liveMode ? "Dừng live" : "Live"}
+        </button>
+        <button type="button" className="secondary-button" onClick={refreshScreen} disabled={busy && !liveMode}>
+          <RefreshCw className={busy ? "spin" : ""} size={16} />
+          {liveMode ? "Nối lại" : "Làm mới"}
+        </button>
+        <button type="button" className="secondary-button" onClick={() => setFocusMode((value) => !value)}>
+          {focusMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          {focusMode ? "Thu gọn" : "Màn lớn"}
+        </button>
+      </div>
+
+      <section className="remote-control-settings">
+        <div className="section-heading">
+          <h2>Stream</h2>
+          <SlidersHorizontal size={18} />
+        </div>
+        <div className="remote-profile-toggle" aria-label="Chất lượng stream">
+          {(Object.keys(REMOTE_STREAM_PROFILES) as RemoteStreamProfile[]).map((profileKey) => (
+            <button
+              key={profileKey}
+              type="button"
+              className={streamProfile === profileKey ? "selected" : ""}
+              onClick={() => {
+                setStreamProfile(profileKey);
+                setStreamNonce((value) => value + 1);
+              }}
+            >
+              {REMOTE_STREAM_PROFILES[profileKey].label}
+            </button>
+          ))}
+        </div>
+        <label className="remote-sensitivity">
+          <span>Độ nhạy</span>
+          <input
+            type="range"
+            min="1"
+            max="3"
+            step="0.1"
+            value={touchSensitivity}
+            onChange={(event) => setTouchSensitivity(Number(event.target.value))}
+          />
+          <strong>{touchSensitivity.toFixed(1)}x</strong>
+        </label>
+      </section>
+
+      <section className="remote-screen-card">
+        <div className="remote-screen-head">
+          <div>
+            <span>Màn hình laptop</span>
+            <strong>{screen ? `${screen.width} x ${screen.height}` : liveMode ? "Live stream" : "Chưa có khung hình"}</strong>
+          </div>
+          <small>{liveMode ? "MJPEG" : "Manual"}</small>
+        </div>
+        <div className={`remote-screen-stage ${hasScreenImage ? "" : "empty"}`}>
+          {hasScreenImage ? (
+            <img
+              src={screenImageSrc}
+              alt="Laptop screen"
+              draggable={false}
+              onLoad={() => {
+                if (liveMode) setMessage("Live stream đang chạy");
+              }}
+              onError={() => {
+                if (!liveMode) return;
+                setMessage("Không mở được live stream. Đang chuyển sang làm mới thủ công.");
+                setLiveMode(false);
+                void loadScreen();
+              }}
+              onPointerDown={handleScreenPointerDown}
+              onPointerUp={handleScreenPointerUp}
+            />
+          ) : (
+            <div>
+              <MonitorSmartphone size={42} />
+              <strong>Chưa có khung hình</strong>
+            </div>
+          )}
+        </div>
+        <div className="remote-status-row">
+          <span>{message}</span>
+          <span>{liveMode ? "Live" : screen?.capturedAt ? shortTimeLabel(screen.capturedAt) : ""}</span>
+        </div>
+      </section>
+
+      <section className="remote-input-grid">
+        <div className="remote-touchpad" onPointerDown={handleTouchpadDown} onPointerMove={handleTouchpadMove} onPointerUp={handleTouchpadUp}>
+          <MousePointer2 size={28} />
+          <strong>Touchpad</strong>
+        </div>
+        <div className="remote-mouse-actions">
+          <button type="button" className="secondary-button" onClick={() => sendAtLastPoint("double_tap")}>
+            <MousePointerClick size={16} />
+            Double
+          </button>
+          <button type="button" className="secondary-button" onClick={() => sendAtLastPoint("right_tap")}>
+            <MousePointerClick size={16} />
+            Chuột phải
+          </button>
+          <button type="button" className="secondary-button" onClick={() => void sendRemoteInput({ action: "scroll", deltaY: -360 }, false)}>
+            <ChevronRight size={16} />
+            Lên
+          </button>
+          <button type="button" className="secondary-button" onClick={() => void sendRemoteInput({ action: "scroll", deltaY: 360 }, false)}>
+            <ChevronRight size={16} />
+            Xuống
+          </button>
+        </div>
+      </section>
+
+      <section className="remote-keyboard-card">
+        <div className="section-heading">
+          <h2>Phím nhanh</h2>
+          <Keyboard size={18} />
+        </div>
+        <div className="remote-shortcuts">
+          {shortcuts.map((item) => (
+            <button key={item.label} type="button" onClick={() => void sendRemoteInput(item.payload)}>
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <form className="remote-text-form" onSubmit={submitText}>
+          <input value={textDraft} onChange={(event) => setTextDraft(event.target.value)} placeholder="Nhập text" />
+          <button type="submit" className="primary-button" disabled={!textDraft.trim()}>
+            <Clipboard size={16} />
+            Dán
+          </button>
+        </form>
+      </section>
     </div>
   );
 }

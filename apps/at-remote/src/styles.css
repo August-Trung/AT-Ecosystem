@@ -798,6 +798,11 @@ button:disabled {
   color: var(--success);
 }
 
+.module-tile.control .module-icon {
+  background: #e9fbf3;
+  color: var(--success);
+}
+
 .module-tile strong,
 .module-tile small {
   max-width: 100%;
@@ -857,6 +862,242 @@ button:disabled {
 .commands-panel {
   display: grid;
   gap: 10px;
+}
+
+.remote-control-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.remote-control-panel.focus-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  width: 100%;
+  max-width: none;
+  min-height: 100dvh;
+  overflow-y: auto;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  background: #101828;
+}
+
+.remote-control-panel.focus-mode .panel-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.remote-screen-card,
+.remote-keyboard-card,
+.remote-control-settings {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  box-shadow: 0 10px 26px rgba(21, 19, 33, 0.07);
+}
+
+.remote-control-panel.focus-mode .remote-screen-card,
+.remote-control-panel.focus-mode .remote-keyboard-card,
+.remote-control-panel.focus-mode .remote-control-settings {
+  box-shadow: none;
+}
+
+.remote-profile-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-profile-toggle button {
+  min-height: 38px;
+  border-radius: 8px;
+  background: #f0f3f9;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.remote-profile-toggle button.selected {
+  background: #fff4ed;
+  border-color: rgba(255, 90, 61, 0.34);
+  color: var(--teal-dark);
+}
+
+.remote-sensitivity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.remote-sensitivity input {
+  width: 100%;
+  accent-color: var(--teal);
+}
+
+.remote-sensitivity strong {
+  color: var(--ink);
+  text-align: right;
+}
+
+.remote-screen-head,
+.remote-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.remote-screen-head div {
+  min-width: 0;
+}
+
+.remote-screen-head span,
+.remote-status-row,
+.remote-screen-head small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.remote-screen-head span {
+  display: block;
+  text-transform: uppercase;
+}
+
+.remote-screen-head strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-screen-stage {
+  min-height: 236px;
+  aspect-ratio: 16 / 10;
+  border-radius: 8px;
+  background: #121826;
+  border: 1px solid rgba(21, 19, 33, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.remote-control-panel.focus-mode .remote-screen-stage {
+  min-height: min(68dvh, 680px);
+}
+
+.remote-screen-stage.empty {
+  background: #f0f3f9;
+  color: var(--muted);
+}
+
+.remote-screen-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+  user-select: none;
+  touch-action: none;
+}
+
+.remote-screen-stage div {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  font-weight: 900;
+}
+
+.remote-status-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-input-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+}
+
+.remote-touchpad {
+  min-height: 132px;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  background: #f0edff;
+  color: var(--blue);
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  touch-action: none;
+  box-shadow: 0 10px 26px rgba(21, 19, 33, 0.07);
+}
+
+.remote-touchpad strong {
+  font-size: 0.9rem;
+}
+
+.remote-mouse-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-mouse-actions .secondary-button:nth-child(3) svg {
+  transform: rotate(-90deg);
+}
+
+.remote-mouse-actions .secondary-button:nth-child(4) svg {
+  transform: rotate(90deg);
+}
+
+.remote-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.remote-shortcuts button {
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fafbff;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.remote-text-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.remote-text-form input {
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  outline: none;
+  padding: 0 12px;
+  font-weight: 750;
+}
+
+.remote-text-form input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(255, 90, 61, 0.16);
 }
 
 .section-heading h2 {
@@ -1953,8 +2194,18 @@ button:disabled {
 
   .macro-editor-row,
   .inline-editor,
-  .expenses-toolbar {
+  .expenses-toolbar,
+  .remote-input-grid,
+  .remote-text-form {
     grid-template-columns: 1fr;
+  }
+
+  .remote-shortcuts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .remote-screen-stage {
+    min-height: 198px;
   }
 
   .expense-row-header {

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, unquote, urlparse
@@ -43,6 +44,10 @@ MAX_COMMAND_LENGTH = 8000
 MAX_IMAGE_EMBED_BYTES = 3 * 1024 * 1024
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_UPLOAD_JSON_BYTES = int(MAX_UPLOAD_BYTES * 1.5) + 1024 * 1024
+REMOTE_SCREEN_MAX_WIDTH = 1280
+REMOTE_SCREEN_JPEG_QUALITY = 62
+REMOTE_STREAM_MAX_FPS = 6
+REMOTE_CONTROL_MAX_TEXT_LENGTH = 4000
 DANGEROUS_UPLOAD_EXTENSIONS = {
     ".bat",
     ".cmd",
@@ -90,6 +95,10 @@ PERMISSION_GROUPS: dict[str, dict[str, str]] = {
         "label": "Trình duyệt",
         "description": "Mở trang web, điều khiển tab và thao tác trong trình duyệt.",
     },
+    "remote_desktop": {
+        "label": "Remote Desktop",
+        "description": "Xem màn hình nhanh và điều khiển chuột/phím trực tiếp từ điện thoại.",
+    },
 }
 
 DEFAULT_DEVICE_PERMISSIONS: dict[str, bool] = {
@@ -97,6 +106,7 @@ DEFAULT_DEVICE_PERMISSIONS: dict[str, bool] = {
     "app_control": True,
     "system_power": False,
     "browser_control": True,
+    "remote_desktop": False,
 }
 
 MOBILE_REMOTE_HELP_TEXT = """AT Remote - lệnh nhanh trên điện thoại
@@ -513,6 +523,204 @@ def _permission_denied_payload(group: str) -> dict[str, Any]:
             code=ErrorCode.NOT_ALLOWED,
         )
     )
+
+
+def _remote_error_payload(message: str, code: ErrorCode = ErrorCode.UNKNOWN) -> dict[str, Any]:
+    return mobile_payload_from_result(ActionResult.err(message, code=code))
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _ratio(value: Any, default: float = 0.5) -> float:
+    return max(0.0, min(1.0, _number(value, default)))
+
+
+def _remote_screen_jpeg(
+    *,
+    max_width: int = REMOTE_SCREEN_MAX_WIDTH,
+    quality: int = REMOTE_SCREEN_JPEG_QUALITY,
+) -> tuple[bytes, dict[str, Any]]:
+    from PIL import Image, ImageGrab
+
+    image = ImageGrab.grab()
+    width, height = image.size
+    preview = image.convert("RGB")
+    if max_width > 0 and width > max_width:
+        scale = max_width / float(width)
+        preview_height = max(1, int(height * scale))
+        resample_filter = getattr(getattr(Image, "Resampling", Image), "LANCZOS", 1)
+        preview = preview.resize((max_width, preview_height), resample_filter)
+    buffer = BytesIO()
+    preview.save(buffer, format="JPEG", quality=max(35, min(90, int(quality))), optimize=True)
+    return buffer.getvalue(), {
+        "width": width,
+        "height": height,
+        "previewWidth": preview.size[0],
+        "previewHeight": preview.size[1],
+        "capturedAt": _now_iso(),
+    }
+
+
+def _remote_screen_snapshot(
+    *,
+    max_width: int = REMOTE_SCREEN_MAX_WIDTH,
+    quality: int = REMOTE_SCREEN_JPEG_QUALITY,
+) -> dict[str, Any]:
+    try:
+        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality)
+        encoded = base64.b64encode(frame).decode("ascii")
+        return {
+            "ok": True,
+            "status": "success",
+            "message": "Đã cập nhật màn hình.",
+            "screen": {
+                "image": f"data:image/jpeg;base64,{encoded}",
+                **meta,
+            },
+        }
+    except Exception as exc:
+        return _remote_error_payload(f"Không thể chụp màn hình: {exc}", code=ErrorCode.INTERNAL_ERROR)
+
+
+def _remote_screen_size() -> tuple[int, int]:
+    try:
+        width = int(executor.win32api.GetSystemMetrics(0))
+        height = int(executor.win32api.GetSystemMetrics(1))
+    except Exception:
+        width, height = 1, 1
+    return max(1, width), max(1, height)
+
+
+def _remote_point(payload: dict[str, Any], *, prefix: str = "") -> tuple[int, int]:
+    width, height = _remote_screen_size()
+    x_key = f"{prefix}XRatio" if prefix else "xRatio"
+    y_key = f"{prefix}YRatio" if prefix else "yRatio"
+    x = int(round((width - 1) * _ratio(payload.get(x_key), 0.5)))
+    y = int(round((height - 1) * _ratio(payload.get(y_key), 0.5)))
+    return x, y
+
+
+def _mouse_click(button: str = "left") -> None:
+    button = str(button or "left").strip().lower()
+    cx, cy = executor.win32api.GetCursorPos()
+    if button == "right":
+        down = executor.win32con.MOUSEEVENTF_RIGHTDOWN
+        up = executor.win32con.MOUSEEVENTF_RIGHTUP
+    elif button == "middle":
+        down = getattr(executor.win32con, "MOUSEEVENTF_MIDDLEDOWN", 0x0020)
+        up = getattr(executor.win32con, "MOUSEEVENTF_MIDDLEUP", 0x0040)
+    else:
+        down = executor.win32con.MOUSEEVENTF_LEFTDOWN
+        up = executor.win32con.MOUSEEVENTF_LEFTUP
+    executor.win32api.mouse_event(down, cx, cy, 0, 0)
+    executor.win32api.mouse_event(up, cx, cy, 0, 0)
+
+
+def _remote_keyboard_result(payload: dict[str, Any], action: str) -> ActionResult:
+    raw_keys = payload.get("keys")
+    key = str(payload.get("key") or payload.get("combo") or "").strip()
+    if action in {"hotkey", "combo"} or raw_keys or "+" in key:
+        if raw_keys is None:
+            raw_keys = [item for item in re.split(r"[\s+]+", key) if item]
+        return executor.keyboard_control("press_combo", keys=raw_keys)
+
+    aliases = {
+        "esc": "escape",
+        "escape": "escape",
+        "enter": "enter",
+        "return": "enter",
+        "tab": "tab",
+        "space": "space",
+        "backspace": "backspace",
+        "delete": "delete",
+        "del": "delete",
+        "select_all": "select_all",
+        "ctrl_a": "select_all",
+        "copy": "copy",
+        "paste": "paste",
+        "cut": "cut",
+        "undo": "undo",
+        "redo": "redo",
+        "release_all": "release_all",
+    }
+    mapped = aliases.get(key.strip().lower().replace("+", "_").replace(" ", "_"))
+    if not mapped:
+        return ActionResult.err("Phím điều khiển không hợp lệ.", code=ErrorCode.UNKNOWN)
+    return executor.keyboard_control(mapped)
+
+
+def _remote_input_result(payload: dict[str, Any]) -> dict[str, Any]:
+    action = str(payload.get("action") or payload.get("type") or "").strip().lower().replace("-", "_")
+    try:
+        if action in {"tap", "click", "right_tap", "right_click", "double_tap", "double_click"}:
+            executor.win32api.SetCursorPos(_remote_point(payload))
+            if action in {"right_tap", "right_click"}:
+                _mouse_click("right")
+            elif action in {"double_tap", "double_click"}:
+                _mouse_click("left")
+                time.sleep(0.07)
+                _mouse_click("left")
+            else:
+                _mouse_click(str(payload.get("button") or "left"))
+            return mobile_payload_from_result(ActionResult.ok("Đã gửi thao tác chuột.", remote_action=action))
+
+        if action == "drag":
+            start = _remote_point(payload, prefix="from")
+            end = _remote_point(payload)
+            executor.win32api.SetCursorPos(start)
+            executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_LEFTDOWN, start[0], start[1], 0, 0)
+            time.sleep(0.03)
+            executor.win32api.SetCursorPos(end)
+            time.sleep(0.03)
+            executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_LEFTUP, end[0], end[1], 0, 0)
+            return mobile_payload_from_result(ActionResult.ok("Đã kéo chuột.", remote_action=action))
+
+        if action == "move":
+            width, height = _remote_screen_size()
+            cx, cy = executor.win32api.GetCursorPos()
+            dx = _number(payload.get("dx", payload.get("deltaX")), 0.0)
+            dy = _number(payload.get("dy", payload.get("deltaY")), 0.0)
+            scale = max(0.25, min(4.0, _number(payload.get("scale"), 1.0)))
+            x = max(0, min(width - 1, int(round(cx + dx * scale))))
+            y = max(0, min(height - 1, int(round(cy + dy * scale))))
+            executor.win32api.SetCursorPos((x, y))
+            return mobile_payload_from_result(ActionResult.ok("Đã di chuyển chuột.", remote_action=action))
+
+        if action == "scroll":
+            amount = int(max(-960, min(960, -_number(payload.get("deltaY"), 120.0))))
+            if amount == 0:
+                amount = -120
+            executor.win32api.mouse_event(executor.win32con.MOUSEEVENTF_WHEEL, 0, 0, amount, 0)
+            return mobile_payload_from_result(ActionResult.ok("Đã cuộn.", remote_action=action))
+
+        if action in {"key", "hotkey", "combo", "release_all"}:
+            key_payload = {**payload}
+            if action == "release_all":
+                key_payload["key"] = "release_all"
+            return mobile_payload_from_result(_remote_keyboard_result(key_payload, action))
+
+        if action in {"text", "paste_text"}:
+            text = str(payload.get("text") or "")
+            if not text:
+                return _remote_error_payload("Chưa có nội dung để nhập.", code=ErrorCode.UNKNOWN)
+            if len(text) > REMOTE_CONTROL_MAX_TEXT_LENGTH:
+                return _remote_error_payload("Nội dung nhập quá dài.", code=ErrorCode.UNKNOWN)
+            clipboard_result = executor.clipboard_bridge("set", text=text)
+            if clipboard_result.status == ActionStatus.ERROR:
+                return mobile_payload_from_result(clipboard_result)
+            paste_result = executor.keyboard_control("paste")
+            if paste_result.status == ActionStatus.ERROR:
+                return mobile_payload_from_result(paste_result)
+            return mobile_payload_from_result(ActionResult.ok("Đã nhập văn bản vào máy tính.", remote_action=action))
+
+        return _remote_error_payload("Thao tác điều khiển không hợp lệ.", code=ErrorCode.UNKNOWN)
+    except Exception as exc:
+        return _remote_error_payload(f"Không thể gửi thao tác điều khiển: {exc}", code=ErrorCode.INTERNAL_ERROR)
 
 
 def _normalize_bind_host(host: str) -> str:
@@ -992,6 +1200,34 @@ class MobileRemoteBridge:
             "groups": permission_groups_public(public.get("permissions") or {}),
         }
 
+    def remote_screen(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        payload = _remote_screen_snapshot()
+        payload["device"] = _public_device(device)
+        return payload
+
+    def remote_stream_auth(self, auth_key: str) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        return {"ok": True, "device": _public_device(device)}
+
+    def handle_remote_input(self, auth_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+        device = self._authenticate(auth_key)
+        if not device:
+            return {"ok": False, "status": "unauthorized", "message": "Không kết nối được với máy tính."}
+        if not _permission_enabled(device, "remote_desktop"):
+            return _permission_denied_payload("remote_desktop")
+        result = _remote_input_result(payload)
+        result["device"] = _public_device(device)
+        return result
+
     def handle_command(self, auth_key: str, command: str) -> dict[str, Any]:
         device = self._authenticate(auth_key)
         if not device:
@@ -1418,6 +1654,12 @@ class MobileRemoteBridge:
                 if parsed.path == "/api/permissions":
                     self._send_json(bridge.device_permissions(self._auth_key()))
                     return
+                if parsed.path == "/api/remote/screen":
+                    self._send_json(bridge.remote_screen(self._auth_key()))
+                    return
+                if parsed.path == "/api/remote/stream":
+                    self._send_remote_stream(parsed)
+                    return
                 if parsed.path.startswith("/api/files/"):
                     query = parse_qs(parsed.query)
                     file_id = unquote(parsed.path.removeprefix("/api/files/")).strip("/")
@@ -1458,6 +1700,10 @@ class MobileRemoteBridge:
                     body = self._read_json(max_bytes=MAX_UPLOAD_JSON_BYTES)
                     self._send_json(bridge.handle_share(self._auth_key(), body))
                     return
+                if parsed.path == "/api/remote/input":
+                    body = self._read_json()
+                    self._send_json(bridge.handle_remote_input(self._auth_key(), body))
+                    return
                 if parsed.path == "/api/uploads/delete":
                     body = self._read_json()
                     self._send_json(bridge.delete_upload(self._auth_key(), body))
@@ -1473,6 +1719,13 @@ class MobileRemoteBridge:
                 if auth_header.lower().startswith("bearer "):
                     auth_key = auth_header[7:].strip()
                 return auth_key
+
+            def _auth_key_from_query(self, parsed) -> str:
+                auth_key = self._auth_key()
+                if auth_key:
+                    return auth_key
+                query = parse_qs(parsed.query)
+                return str((query.get("key") or query.get("authKey") or [""])[0])
 
             def _read_json(self, *, max_bytes: int = 1024 * 1024) -> dict[str, Any]:
                 try:
@@ -1515,6 +1768,52 @@ class MobileRemoteBridge:
                         if not chunk:
                             break
                         self.wfile.write(chunk)
+
+            def _send_remote_stream(self, parsed) -> None:
+                auth_payload = bridge.remote_stream_auth(self._auth_key_from_query(parsed))
+                if not auth_payload.get("ok"):
+                    status = HTTPStatus.UNAUTHORIZED if auth_payload.get("status") == "unauthorized" else HTTPStatus.FORBIDDEN
+                    self._send_json(auth_payload, status=status)
+                    return
+
+                query = parse_qs(parsed.query)
+                fps = int(max(1, min(REMOTE_STREAM_MAX_FPS, _number((query.get("fps") or ["4"])[0], 4))))
+                quality = int(max(35, min(85, _number((query.get("quality") or [str(REMOTE_SCREEN_JPEG_QUALITY)])[0], REMOTE_SCREEN_JPEG_QUALITY))))
+                max_width = int(max(480, min(1920, _number((query.get("maxWidth") or [str(REMOTE_SCREEN_MAX_WIDTH)])[0], REMOTE_SCREEN_MAX_WIDTH))))
+                delay = 1.0 / float(fps)
+
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=atremote")
+                self.send_header("Connection", "close")
+                self._custom_cache_control = True
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+
+                while True:
+                    started = time.monotonic()
+                    try:
+                        frame, meta = _remote_screen_jpeg(max_width=max_width, quality=quality)
+                        headers = (
+                            b"--atremote\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            + f"Content-Length: {len(frame)}\r\n".encode("ascii")
+                            + f"X-AT-Screen-Width: {meta.get('width', '')}\r\n".encode("ascii")
+                            + f"X-AT-Screen-Height: {meta.get('height', '')}\r\n".encode("ascii")
+                            + b"\r\n"
+                        )
+                        self.wfile.write(headers)
+                        self.wfile.write(frame)
+                        self.wfile.write(b"\r\n")
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                        break
+                    except Exception:
+                        time.sleep(delay)
+                        continue
+
+                    elapsed = time.monotonic() - started
+                    if elapsed < delay:
+                        time.sleep(delay - elapsed)
 
             def _serve_static(self, request_path: str) -> None:
                 root = _at_remote_dist_dir()

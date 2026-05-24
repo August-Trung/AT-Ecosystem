@@ -554,3 +554,139 @@ def test_mobile_remote_last_seen_is_throttled(tmp_path, monkeypatch):
         assert second_seen == first_seen
     finally:
         bridge.stop()
+
+
+def _paired_auth_key(bridge: MobileRemoteBridge) -> str:
+    pair = bridge.request_pair("Phone", bridge.pair_code, client_host="192.168.1.51")
+    bridge.approve_pair_request(pair["requestId"])
+    return str(bridge.pair_status(pair["requestId"])["authKey"])
+
+
+def _grant_remote_desktop(bridge: MobileRemoteBridge) -> None:
+    device = bridge.snapshot()["devices"][0]
+    bridge.update_device_permissions(device["id"], {**device["permissions"], "remote_desktop": True})
+
+
+def test_mobile_remote_desktop_requires_permission(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    try:
+        auth_key = _paired_auth_key(bridge)
+
+        payload = bridge.remote_screen(auth_key)
+
+        assert payload["ok"] is False
+        assert payload["status"] == "error"
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_desktop_serves_screen_snapshot(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+        monkeypatch.setattr(
+            mobile_remote_module,
+            "_remote_screen_snapshot",
+            lambda: {
+                "ok": True,
+                "status": "success",
+                "message": "screen",
+                "screen": {
+                    "image": "data:image/jpeg;base64,abc",
+                    "width": 1440,
+                    "height": 900,
+                    "previewWidth": 1280,
+                    "previewHeight": 800,
+                    "capturedAt": "now",
+                },
+            },
+        )
+
+        payload = requests.get(f"{base}/api/remote/screen", headers={"X-AT-Remote-Key": auth_key}, timeout=3).json()
+
+        assert payload["ok"] is True
+        assert payload["screen"]["image"].startswith("data:image/jpeg;base64,")
+        assert payload["screen"]["width"] == 1440
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_desktop_serves_mjpeg_stream(tmp_path, monkeypatch):
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+        monkeypatch.setattr(
+            mobile_remote_module,
+            "_remote_screen_jpeg",
+            lambda **_kwargs: (
+                b"\xff\xd8fake-jpeg\xff\xd9",
+                {"width": 1440, "height": 900, "previewWidth": 640, "previewHeight": 400, "capturedAt": "now"},
+            ),
+        )
+
+        response = requests.get(
+            f"{base}/api/remote/stream?key={auth_key}&fps=2",
+            stream=True,
+            timeout=3,
+        )
+        try:
+            chunk = next(response.iter_content(chunk_size=128))
+        finally:
+            response.close()
+
+        assert response.status_code == 200
+        assert response.headers["Content-Type"].startswith("multipart/x-mixed-replace")
+        assert b"--atremote" in chunk
+        assert b"image/jpeg" in chunk
+    finally:
+        bridge.stop()
+
+
+def test_mobile_remote_desktop_tap_routes_mouse_input(tmp_path, monkeypatch):
+    events: list[tuple[str, tuple[int, int] | int]] = []
+    cursor = [0, 0]
+
+    def fake_set_cursor_pos(point: tuple[int, int]) -> None:
+        cursor[0], cursor[1] = point
+        events.append(("pos", point))
+
+    def fake_get_cursor_pos() -> tuple[int, int]:
+        return (cursor[0], cursor[1])
+
+    def fake_mouse_event(flag: int, x: int, y: int, data: int, extra: int) -> None:
+        events.append(("mouse", flag))
+
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "GetSystemMetrics", lambda index: 1000 if index == 0 else 500)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "SetCursorPos", fake_set_cursor_pos)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "GetCursorPos", fake_get_cursor_pos)
+    monkeypatch.setattr(mobile_remote_module.executor.win32api, "mouse_event", fake_mouse_event)
+
+    bridge = MobileRemoteBridge(_FakeEngine(), settings_store=_store(tmp_path, monkeypatch))
+    bridge.start(host="127.0.0.1", port=0)
+    base = f"http://127.0.0.1:{bridge.port}"
+    try:
+        auth_key = _paired_auth_key(bridge)
+        _grant_remote_desktop(bridge)
+
+        payload = requests.post(
+            f"{base}/api/remote/input",
+            headers={"X-AT-Remote-Key": auth_key},
+            json={"action": "tap", "xRatio": 0.25, "yRatio": 0.5},
+            timeout=3,
+        ).json()
+
+        assert payload["status"] == "success"
+        assert events[0] == ("pos", (250, 250))
+        assert events[1:] == [
+            ("mouse", mobile_remote_module.executor.win32con.MOUSEEVENTF_LEFTDOWN),
+            ("mouse", mobile_remote_module.executor.win32con.MOUSEEVENTF_LEFTUP),
+        ]
+    finally:
+        bridge.stop()
