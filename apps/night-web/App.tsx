@@ -135,8 +135,7 @@ const App: React.FC = () => {
 					<div className="absolute inset-0 bg-indigo-900/10 animate-pulse"></div>
 					<div className="night-dust"></div>
 					<div className="city-fog"></div>
-					<div className="shooting-star"></div>
-					<div className="distant-cab"></div>
+
 					<div
 						className="city-window left-[33%] bottom-[37%]"
 						style={{ animationDelay: "1s" }}></div>

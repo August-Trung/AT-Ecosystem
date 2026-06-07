@@ -242,36 +242,7 @@
 				}
 			}
 
-			@keyframes meteor-sweep {
-				0%,
-				72% {
-					opacity: 0;
-					transform: translate3d(0, 0, 0) rotate(-18deg);
-				}
-				76% {
-					opacity: 0.8;
-				}
-				84%,
-				100% {
-					opacity: 0;
-					transform: translate3d(220px, 70px, 0) rotate(-18deg);
-				}
-			}
 
-			@keyframes cab-pass {
-				0% {
-					transform: translateX(-140px);
-					opacity: 0;
-				}
-				8%,
-				82% {
-					opacity: 0.8;
-				}
-				100% {
-					transform: translateX(calc(100vw + 140px));
-					opacity: 0;
-				}
-			}
 
 			.city-window {
 				position: absolute;
@@ -314,59 +285,7 @@
 				z-index: 13;
 			}
 
-			.shooting-star {
-				position: absolute;
-				top: 22%;
-				left: 22%;
-				width: 88px;
-				height: 2px;
-				pointer-events: none;
-				background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.85));
-				animation: meteor-sweep 12s ease-in-out infinite;
-				z-index: 14;
-			}
 
-			.distant-cab {
-				position: absolute;
-				left: 0;
-				bottom: 7%;
-				width: 76px;
-				height: 18px;
-				pointer-events: none;
-				background: linear-gradient(
-					180deg,
-					transparent 0 5px,
-					#d6a707 5px 10px,
-					#5b4210 10px 14px,
-					#0f172a 14px 18px
-				);
-				box-shadow:
-					14px -5px 0 -1px #facc15,
-					28px -5px 0 -1px #facc15,
-					52px 2px 0 -1px #fef3c7,
-					62px 2px 8px rgba(254, 243, 199, 0.35);
-				opacity: 0.72;
-				animation: cab-pass 19s linear infinite;
-				z-index: 16;
-			}
-
-			.distant-cab::before,
-			.distant-cab::after {
-				content: "";
-				position: absolute;
-				bottom: -2px;
-				width: 10px;
-				height: 5px;
-				background: #020617;
-			}
-
-			.distant-cab::before {
-				left: 12px;
-			}
-
-			.distant-cab::after {
-				right: 12px;
-			}
 
 			::-webkit-scrollbar {
 				width: 8px;
