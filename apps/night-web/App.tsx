@@ -5,13 +5,7 @@ import { sound } from "./services/soundService";
 import Lobby from "./components/Lobby";
 import ChatRoom from "./components/ChatRoom";
 
-const Chain: React.FC<{ length: number }> = ({ length }) => (
-	<div className="flex flex-col items-center">
-		{[...Array(length)].map((_, i) => (
-			<div key={i} className="chain-link" />
-		))}
-	</div>
-);
+
 
 // Component tạo hiệu ứng mưa rơi ngẫu nhiên chân thực
 const RainOverlay: React.FC = () => {
@@ -246,20 +240,9 @@ const App: React.FC = () => {
 
 			{appState === AppState.CLOSED && (
 				<div className="flex flex-col items-center max-w-lg w-full z-20 mt-[15vh]">
-					<div className="relative mb-12 flex flex-col items-center swinging-board">
-						<div className="absolute bottom-full left-0 right-0 flex justify-between px-16 pointer-events-none">
-							<div className="flex flex-col items-center h-screen justify-end">
-								<Chain length={40} />
-								<div className="chain-hook -mb-1"></div>
-							</div>
-							<div className="flex flex-col items-center h-screen justify-end">
-								<Chain length={40} />
-								<div className="chain-hook -mb-1"></div>
-							</div>
-						</div>
-
-						<div className="sign-board bg-[#050510] px-12 py-6 pixel-border border-indigo-900 shadow-[0_0_80px_rgba(79,70,229,0.5)] relative z-20">
-							<h1 className="text-7xl md:text-9xl tracking-tighter uppercase font-bold flicker-text">
+					<div className="relative mb-12 flex flex-col items-center">
+						<div className="neon-sign bg-[#050510] px-12 py-6 pixel-border border-indigo-900 relative z-20">
+							<h1 className="text-7xl md:text-9xl tracking-tighter uppercase font-bold flicker-text" style={{ textShadow: '0 0 15px rgba(79, 70, 229, 0.8)' }}>
 								CLOSED
 							</h1>
 						</div>
