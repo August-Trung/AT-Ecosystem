@@ -247,8 +247,8 @@ const App: React.FC = () => {
 						</div>
 					</div>
 
-					<div className="bg-black/60 p-10 pixel-border w-full text-center backdrop-blur-md shadow-2xl">
-						<p className="text-indigo-500 mb-6 text-sm uppercase tracking-[0.6em] animate-pulse font-bold">
+					<div className="bg-black/80 p-10 pixel-border w-full text-center shadow-2xl">
+						<p className="text-indigo-500 mb-6 text-sm uppercase tracking-[0.6em] font-bold">
 							AVAILABLE FROM 10:00 PM TO 4:00 AM
 						</p>
 						<div className="text-5xl text-slate-100 font-mono tracking-[0.2em] bg-indigo-950/30 px-8 py-5 pixel-border border-slate-700 shadow-inner">
