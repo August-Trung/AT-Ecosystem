@@ -126,7 +126,6 @@ const App: React.FC = () => {
 			{/* Dynamic Background Elements */}
 				<div className="absolute inset-0 pointer-events-none bg-night-city opacity-80">
 					<div className="absolute top-[12%] left-[18%] moon scale-75 md:scale-90 opacity-20"></div>
-					<div className="absolute inset-0 bg-indigo-900/10 animate-pulse"></div>
 					<div className="night-dust"></div>
 					<div className="city-fog"></div>
 

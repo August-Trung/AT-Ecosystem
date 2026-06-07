@@ -155,33 +155,9 @@
 				}
 			}
 
-			@keyframes night-drift {
-				0% {
-					transform: translate3d(-4px, 4px, 0);
-					opacity: 0.12;
-				}
-				50% {
-					opacity: 0.28;
-				}
-				100% {
-					transform: translate3d(18px, -18px, 0);
-					opacity: 0.12;
-				}
-			}
 
-			@keyframes fog-drift {
-				0% {
-					transform: translateX(-8%);
-					opacity: 0.08;
-				}
-				45% {
-					opacity: 0.2;
-				}
-				100% {
-					transform: translateX(8%);
-					opacity: 0.08;
-				}
-			}
+
+
 
 
 
@@ -207,7 +183,7 @@
 				background-position:
 					24px 18px,
 					90px 70px;
-				animation: night-drift 18s ease-in-out infinite alternate;
+				opacity: 0.2;
 				z-index: 12;
 			}
 
@@ -222,7 +198,7 @@
 					linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.16), transparent) 0 10px / 100% 2px no-repeat,
 					linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.12), transparent) 0 44px / 100% 2px no-repeat,
 					linear-gradient(90deg, transparent, rgba(226, 232, 240, 0.12), transparent) 0 76px / 100% 1px no-repeat;
-				animation: fog-drift 13s ease-in-out infinite alternate;
+				opacity: 0.15;
 				z-index: 13;
 			}
 
