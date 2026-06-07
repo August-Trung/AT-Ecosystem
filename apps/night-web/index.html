@@ -134,10 +134,22 @@
 					0 0 30px rgba(79, 70, 229, 0.5),
 					0 0 60px rgba(79, 70, 229, 0.2),
 					inset 0 0 30px rgba(79, 70, 229, 0.1);
+				animation: neon-pulse 4s ease-in-out infinite;
+			}
+
+			@keyframes neon-pulse {
+				0%, 100% { opacity: 1; }
+				50% { opacity: 0.85; }
 			}
 
 			.flicker-text {
 				animation: flicker 4s linear infinite;
+			}
+
+			/* Window twinkle - opacity only, GPU-friendly */
+			@keyframes window-twinkle {
+				0%, 100% { opacity: 0.25; }
+				50% { opacity: 0.8; }
 			}
 
 			.city-window {
@@ -146,6 +158,14 @@
 				height: 18px;
 				background: #d9df4a;
 				opacity: 0.45;
+				animation: window-twinkle 6s ease-in-out infinite;
+			}
+
+			/* Dust drift - transform only, GPU-composited */
+			@keyframes dust-drift {
+				0% { transform: translate3d(0, 0, 0); }
+				50% { transform: translate3d(12px, -8px, 0); }
+				100% { transform: translate3d(0, 0, 0); }
 			}
 
 			.night-dust {
@@ -162,7 +182,16 @@
 					24px 18px,
 					90px 70px;
 				opacity: 0.2;
+				animation: dust-drift 20s ease-in-out infinite;
+				will-change: transform;
 				z-index: 12;
+			}
+
+			/* Fog drift - transform only, GPU-composited */
+			@keyframes fog-drift {
+				0% { transform: translateX(-5%); }
+				50% { transform: translateX(5%); }
+				100% { transform: translateX(-5%); }
 			}
 
 			.city-fog {
@@ -177,6 +206,8 @@
 					linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.12), transparent) 0 44px / 100% 2px no-repeat,
 					linear-gradient(90deg, transparent, rgba(226, 232, 240, 0.12), transparent) 0 76px / 100% 1px no-repeat;
 				opacity: 0.15;
+				animation: fog-drift 15s ease-in-out infinite;
+				will-change: transform;
 				z-index: 13;
 			}
 
