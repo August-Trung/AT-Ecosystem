@@ -10,12 +10,15 @@ import {
 	BARTENDER_ZONE,
 } from "../types";
 import { lobbyPresence } from "../services/lobbyPresenceService";
+import { sound } from "../services/soundService";
 
 interface LobbyCanvasProps {
 	myAvatar: Avatar;
 	myAlias: string;
 	isNearBartender: boolean;
 	onNearBartenderChange: (isNear: boolean) => void;
+	onNearMailboxChange: (isNear: boolean) => void;
+	onMailboxClick: () => void;
 }
 
 // Avatar head colors
@@ -44,6 +47,8 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 	myAlias,
 	isNearBartender,
 	onNearBartenderChange,
+	onNearMailboxChange,
+	onMailboxClick,
 }) => {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const animationFrameRef = useRef<number | null>(null);
@@ -59,6 +64,7 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 	const isMovingRef = useRef(false);
 	const peersRef = useRef<LobbyPeer[]>([]);
 	const nearBartenderRef = useRef(false);
+	const nearMailboxRef = useRef(false);
 	const scaleInfoRef = useRef({ scale: 1, offsetX: 0, offsetY: 0 });
 
 	// ─────────────────────────────────────────────
@@ -210,6 +216,28 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 		drawStool(420);
 		drawStool(700);
 		drawStool(780);
+
+		// === MAILBOX STAND (at X = 560) ===
+		// Postbox body (indigo / red classic style)
+		ctx.fillStyle = "#991b1b"; // Dark red body
+		ctx.fillRect(550, GROUND_Y - 45, 20, 32);
+		// Top round dome
+		ctx.fillStyle = "#b91c1c"; // Lighter red top
+		ctx.fillRect(552, GROUND_Y - 51, 16, 6);
+		// Stand post
+		ctx.fillStyle = "#475569"; // Steel grey stand post
+		ctx.fillRect(558, GROUND_Y - 13, 4, 13);
+		// Base stand
+		ctx.fillStyle = "#334155";
+		ctx.fillRect(554, GROUND_Y - 3, 12, 3);
+		// Slot for letters
+		ctx.fillStyle = "#1e1b4b"; // Dark purple slot
+		ctx.fillRect(553, GROUND_Y - 40, 14, 4);
+		// Mailbox flag (small yellow/gold rect on the side)
+		ctx.fillStyle = "#fbbf24";
+		ctx.fillRect(570, GROUND_Y - 36, 4, 8);
+		ctx.fillStyle = "#d97706";
+		ctx.fillRect(570, GROUND_Y - 36, 2, 8);
 
 		// === BAR BACK WALL / SHELVES ===
 		ctx.fillStyle = "#1a1028";
@@ -571,6 +599,17 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 			const logicalX = (e.clientX - rect.left - offsetX) / scale;
 			const logicalY = (e.clientY - rect.top - offsetY) / scale;
 
+			// Check if clicked near Mailbox (MAILBOX_X = 560, height ~60px)
+			if (
+				Math.abs(logicalX - 560) < 30 &&
+				logicalY >= GROUND_Y - 60 &&
+				logicalY <= GROUND_Y
+			) {
+				sound.playClick();
+				onMailboxClick();
+				return;
+			}
+
 			// Only move if click is within the room bounds
 			if (logicalX >= 0 && logicalX <= ROOM_WIDTH && logicalY >= 0 && logicalY <= ROOM_HEIGHT) {
 				targetXRef.current = Math.max(40, Math.min(ROOM_WIDTH - 40, logicalX));
@@ -654,6 +693,14 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 			if (nowNear !== nearBartenderRef.current) {
 				nearBartenderRef.current = nowNear;
 				onNearBartenderChange(nowNear);
+			}
+
+			// ── Mailbox proximity check ──
+			const distToMailbox = Math.abs(myXRef.current - 560);
+			const nowNearMailbox = distToMailbox < 70; // MAILBOX_ZONE = 70
+			if (nowNearMailbox !== nearMailboxRef.current) {
+				nearMailboxRef.current = nowNearMailbox;
+				onNearMailboxChange(nowNearMailbox);
 			}
 
 			// ── Clear canvas ──
@@ -824,6 +871,35 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 				ctx.fillText(promptText, BARTENDER_X, promptY + 12);
 			}
 
+			// 5b. Interaction prompt (if near Mailbox)
+			if (nearMailboxRef.current) {
+				const promptBob = Math.sin(frame / 12) * 3;
+				const promptY = 300 + promptBob;
+				const promptText = "📬 Mở Hộp Thư Đêm Khuya";
+
+				ctx.font = "13px VT323, monospace";
+				const textWidth = ctx.measureText(promptText).width;
+				const promptX = 560 - textWidth / 2 - 10;
+
+				// Prompt background
+				ctx.fillStyle = "rgba(15, 118, 110, 0.85)";
+				ctx.beginPath();
+				ctx.roundRect(promptX, promptY - 4, textWidth + 20, 22, 4);
+				ctx.fill();
+
+				// Prompt border
+				ctx.strokeStyle = "#2dd4bf";
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.roundRect(promptX, promptY - 4, textWidth + 20, 22, 4);
+				ctx.stroke();
+
+				// Prompt text
+				ctx.fillStyle = "#e2e8f0";
+				ctx.textAlign = "center";
+				ctx.fillText(promptText, 560, promptY + 12);
+			}
+
 			// 6. Vignette around edges
 			// Top vignette
 			const vigTop = ctx.createLinearGradient(0, 0, 0, 80);
@@ -892,7 +968,7 @@ const LobbyCanvas: React.FC<LobbyCanvasProps> = ({
 			}
 			lobbyPresence.onPeersUpdate = () => {};
 		};
-	}, [myAvatar, myAlias, buildRoomBackground, drawCharacter, onNearBartenderChange]);
+	}, [myAvatar, myAlias, buildRoomBackground, drawCharacter, onNearBartenderChange, onNearMailboxChange, onMailboxClick]);
 
 	return (
 		<canvas

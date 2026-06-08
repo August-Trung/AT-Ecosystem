@@ -189,11 +189,34 @@ export interface BartenderMessage {
 	timestamp: number;
 }
 
+export interface JournalEntry {
+	id: string;
+	content: string;
+	alias: string;
+	avatar: Avatar;
+	mood: string;
+	likes: number;
+	timestamp: number;
+}
+
+export interface Letter {
+	id: string;
+	content: string;
+	senderId: string;
+	recipientId?: string | null;
+	replyToId?: string | null;
+	timestamp: number;
+	senderAlias: string;
+	senderAvatar: Avatar;
+}
+
 // Room constants (logical coordinates for Canvas)
 export const ROOM_WIDTH = 1200;
 export const ROOM_HEIGHT = 500;
 export const GROUND_Y = 390;
 export const BARTENDER_X = 980;
 export const BARTENDER_ZONE = 130;
+export const MAILBOX_X = 560;
+export const MAILBOX_ZONE = 70;
 export const MAX_LOBBY_PEERS = 20;
 export const LOBBY_EMOJIS = ["👋", "😊", "🔥", "💤", "🎵", "❤️", "😂", "🤔"];

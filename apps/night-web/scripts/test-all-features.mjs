@@ -6,13 +6,25 @@ import ts from "typescript";
 
 // Helpers to load and transpile TypeScript files
 function loadTsModule(filePath, mockRequire = {}) {
-	const source = fs.readFileSync(filePath, "utf8");
+	let source = fs.readFileSync(filePath, "utf8");
+	// Replace Vite environment variables with process.env so it works inside Node VM
+	source = source.replace(/import\.meta\.env/g, "process.env");
+	source = source.replace(/\(import\.meta\s+as\s+any\)\.env/g, "process.env");
+	
 	const compiled = ts.transpileModule(source, {
 		compilerOptions: {
 			module: ts.ModuleKind.CommonJS,
 			target: ts.ScriptTarget.ES2022,
 		},
 	});
+
+	const mockLocalStorage = {};
+	const localStorageMock = {
+		getItem(key) { return mockLocalStorage[key] || null; },
+		setItem(key, val) { mockLocalStorage[key] = val; },
+		removeItem(key) { delete mockLocalStorage[key]; },
+		clear() { for (const k of Object.keys(mockLocalStorage)) delete mockLocalStorage[k]; }
+	};
 
 	const module = { exports: {} };
 	vm.runInNewContext(compiled.outputText, {
@@ -37,6 +49,12 @@ function loadTsModule(filePath, mockRequire = {}) {
 		clearInterval,
 		Date,
 		Math,
+		localStorage: localStorageMock,
+		process: {
+			env: {
+				...process.env
+			}
+		},
 	});
 	return module.exports;
 }
@@ -505,10 +523,85 @@ assert.equal(q[0].id, "track-2");
 console.log("✅ Jukebox Request Queue Tests passed.");
 
 
+// ----------------------------------------------------
+// TEST SUITE 7: Journal Service Tests
+// ----------------------------------------------------
+console.log("\n---------------------------------------");
+console.log("RUNNING: Journal Service Tests...");
+console.log("---------------------------------------");
+
+const journalModule = loadTsModule(path.resolve("services/journalService.ts"));
+const js = journalModule.journalService;
+
+// Test user ID creation
+assert.ok(typeof journalModule.userId === "string" && journalModule.userId.length > 0, "User ID should be generated");
+
+async function runJournalTests() {
+	// Reset local storage mocks for local test running
+	const mockLocalStorage = {};
+	global.localStorage = {
+		getItem(key) { return mockLocalStorage[key] || null; },
+		setItem(key, val) { mockLocalStorage[key] = val; },
+		removeItem(key) { delete mockLocalStorage[key]; },
+		clear() { for (const k of Object.keys(mockLocalStorage)) delete mockLocalStorage[k]; }
+	};
+
+	// 1. Fetch entries
+	const entries = await js.getEntries();
+	assert.equal(entries.length, 5, "Should return 5 seeded journals");
+	assert.ok(entries[0].timestamp >= entries[1].timestamp, "Journals should be sorted descending");
+
+	// 2. Create entry
+	const newEntry = await js.createEntry("Thử nghiệm bài viết nhật ký", "Người Đọc Thầm", "ghost", "deep");
+	assert.ok(newEntry !== null);
+	assert.equal(newEntry.content, "Thử nghiệm bài viết nhật ký");
+	assert.equal(newEntry.alias, "Người Đọc Thầm");
+	assert.equal(newEntry.mood, "deep");
+
+	const entriesAfter = await js.getEntries();
+	assert.equal(entriesAfter.length, 6, "Journal list should grow to 6");
+	assert.equal(entriesAfter[0].content, "Thử nghiệm bài viết nhật ký", "New entry should be on top");
+
+	// 3. Like entry
+	const targetId = entriesAfter[1].id;
+	const currentLikes = entriesAfter[1].likes;
+	const liked = await js.likeEntry(targetId);
+	assert.ok(liked, "Like operation should succeed");
+	const entriesAfterLike = await js.getEntries();
+	const likedEntry = entriesAfterLike.find(e => e.id === targetId);
+	assert.equal(likedEntry.likes, currentLikes + 1, "Likes count should increment by 1");
+
+	// 4. Send Letter to the wind
+	const sent = await js.sendLetter("Chào vũ trụ", "Người Đọc Thầm", "ghost");
+	assert.ok(sent, "Send letter to the wind should succeed");
+
+	// 5. Get Random Letter
+	const randomLetter = await js.getRandomLetter();
+	assert.ok(randomLetter !== null, "Should fetch a seed random letter");
+	assert.notEqual(randomLetter.senderId, journalModule.userId, "Random letter should not be written by current user");
+	assert.equal(randomLetter.recipientId, null, "Random letter should be public (recipientId is null)");
+
+	// 6. Inbox letters
+	const myInbox = await js.getMyLetters();
+	assert.equal(myInbox.length, 0, "Current user inbox should start empty");
+
+	// Simulate receiving a reply from another user
+	const replySent = await js.sendLetter("Phản hồi của người lạ", "Stranger X", "cat", journalModule.userId, "some-letter-id");
+	assert.ok(replySent);
+	const myInboxAfter = await js.getMyLetters();
+	assert.equal(myInboxAfter.length, 1, "Inbox should contain 1 reply");
+	assert.equal(myInboxAfter[0].content, "Phản hồi của người lạ");
+	assert.equal(myInboxAfter[0].senderAlias, "Stranger X");
+
+	console.log("✅ Journal Service Tests passed.");
+}
+
+
 // Run async tests
 (async () => {
 	try {
 		await runBartenderTests();
+		await runJournalTests();
 		console.log("\n=======================================");
 		console.log("🎉 ALL TEST SUITES PASSED SUCCESSFULLY! 🎉");
 		console.log("=======================================");

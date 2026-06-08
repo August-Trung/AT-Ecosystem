@@ -14,6 +14,7 @@ import { lobbyPresence } from "../services/lobbyPresenceService";
 import PixelButton from "./PixelButton";
 import LobbyCanvas from "./LobbyCanvas";
 import BartenderChat from "./BartenderChat";
+import MailboxPanel from "./MailboxPanel";
 
 interface LobbyProps {
 	onStart: (
@@ -77,6 +78,8 @@ const Lobby: React.FC<LobbyProps> = ({
 	const [configOpen, setConfigOpen] = useState(false);
 	const [isNearBartender, setIsNearBartender] = useState(false);
 	const [bartenderChatOpen, setBartenderChatOpen] = useState(false);
+	const [isNearMailbox, setIsNearMailbox] = useState(false);
+	const [mailboxOpen, setMailboxOpen] = useState(false);
 
 	const generateInviteLink = () => {
 		onStartPrivateRoom(myGender, prefGender, myMood, myMood, myAvatar, myAlias);
@@ -143,6 +146,31 @@ const Lobby: React.FC<LobbyProps> = ({
 		setBartenderChatOpen(false);
 	}, []);
 
+	// Mailbox proximity and click handlers
+	const handleNearMailboxChange = useCallback((isNear: boolean) => {
+		setIsNearMailbox(isNear);
+	}, []);
+
+	const handleMailboxClick = useCallback(() => {
+		setMailboxOpen(true);
+	}, []);
+
+	const handleMailboxClose = useCallback(() => {
+		setMailboxOpen(false);
+	}, []);
+
+	// Listen for keyboard shortcut (E) to open Mailbox when near
+	useEffect(() => {
+		const handleGlobalKeyDown = (e: KeyboardEvent) => {
+			if ((e.key === "e" || e.key === "E") && isNearMailbox && !mailboxOpen && !bartenderChatOpen) {
+				sound.playClick();
+				setMailboxOpen(true);
+			}
+		};
+		window.addEventListener("keydown", handleGlobalKeyDown);
+		return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+	}, [isNearMailbox, mailboxOpen, bartenderChatOpen]);
+
 	const handleEmojiSend = useCallback((emoji: string) => {
 		sound.playClick();
 		lobbyPresence.sendEmoji(emoji);
@@ -196,6 +224,8 @@ const Lobby: React.FC<LobbyProps> = ({
 					myAlias={myAlias}
 					isNearBartender={isNearBartender}
 					onNearBartenderChange={handleNearBartenderChange}
+					onNearMailboxChange={handleNearMailboxChange}
+					onMailboxClick={handleMailboxClick}
 				/>
 
 				{/* Config panel toggle button */}
@@ -410,6 +440,14 @@ const Lobby: React.FC<LobbyProps> = ({
 			<BartenderChat
 				isOpen={bartenderChatOpen}
 				onClose={handleBartenderClose}
+			/>
+
+			{/* Mailbox Panel */}
+			<MailboxPanel
+				isOpen={mailboxOpen}
+				myAlias={myAlias}
+				myAvatar={myAvatar}
+				onClose={handleMailboxClose}
 			/>
 		</div>
 	);
