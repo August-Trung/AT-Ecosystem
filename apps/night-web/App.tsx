@@ -84,7 +84,8 @@ const App: React.FC = () => {
 
 		const params = new URLSearchParams(window.location.search);
 		const room = params.get("room");
-		const isAdmin = params.get("admin") === "true" || params.get("bypass") === "true";
+		const bypassToken = (import.meta as any).env?.VITE_ADMIN_BYPASS_TOKEN || "";
+		const isAdmin = bypassToken && params.get("admin") === bypassToken;
 		const isOpen = hour >= 22 || hour < 4 || !!room || isAdmin;
 
 		if (isOpen) {
