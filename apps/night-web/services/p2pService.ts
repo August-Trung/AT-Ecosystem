@@ -363,6 +363,21 @@ export class P2PManager {
 	public sendSketchClose() {
 		this.connection?.send({ type: "sketch_close" });
 	}
+	public sendSketchInvite() {
+		this.connection?.send({ type: "sketch_invite" });
+	}
+	public sendSketchDecline() {
+		this.connection?.send({ type: "sketch_decline" });
+	}
+	public sendSketchStart(prompt: string) {
+		this.connection?.send({ type: "sketch_start", prompt });
+	}
+	public sendSketchVote(rating: "like" | "love") {
+		this.connection?.send({ type: "sketch_vote", rating });
+	}
+	public sendSketchQuit() {
+		this.connection?.send({ type: "sketch_quit" });
+	}
 	public sendGameInvite() {
 		this.connection?.send({ type: "game_invite" });
 	}

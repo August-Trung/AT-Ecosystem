@@ -24,9 +24,23 @@ import {
 } from "../services/tienLenRules";
 import PixelButton from "./PixelButton";
 import TienLenGame from "./TienLenGame";
-import SketchCanvas from "./SketchCanvas";
+import SketchBattle from "./SketchBattle";
 import TicTacToeGame from "./TicTacToeGame";
 
+
+const SKETCH_PROMPTS = [
+	"Mèo béo pixel 🐱",
+	"Neon Lounge 🍹",
+	"Thành phố mưa rơi 🌧️",
+	"Tách cà phê nóng ☕",
+	"Đêm trăng khuyết 🌙",
+	"Sao băng điều ước 🌠",
+	"Robot cô đơn 🤖",
+	"Trái tim pha lê 💎",
+	"Đĩa bay Alien 🛸",
+	"Lâu đài trên mây 🏰"
+];
+const getRandomPrompt = () => SKETCH_PROMPTS[Math.floor(Math.random() * SKETCH_PROMPTS.length)];
 
 interface ChatRoomProps {
 	myAvatar: Avatar;
@@ -82,12 +96,14 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		isMyTurn: boolean;
 		status: "idle" | "pendingInvite" | "invited" | "playing" | "ended" | "quit";
 		winner: "me" | "stranger" | "draw" | null;
+		winningLine: number[] | null;
 	}>({
-		board: Array(9).fill(null),
+		board: Array(225).fill(null),
 		symbol: "X",
 		isMyTurn: false,
 		status: "idle",
 		winner: null,
+		winningLine: null,
 	});
 	const [incomingTttEmoji, setIncomingTttEmoji] = useState<string | null>(null);
 	const [sendingMessageIds, setSendingMessageIds] = useState<Set<string>>(new Set());
@@ -99,6 +115,15 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 	);
 	const [showAppMenu, setShowAppMenu] = useState(false);
 	const [showSketch, setShowSketch] = useState(false);
+	const [sketchBattle, setSketchBattle] = useState<{
+		status: "idle" | "pendingInvite" | "invited" | "playing";
+		prompt: string;
+		opponentVote: "like" | "love" | null;
+	}>({
+		status: "idle",
+		prompt: "",
+		opponentVote: null,
+	});
 
 	const [incomingSketch, setIncomingSketch] = useState<string | null>(null);
 	const [reactionOverlay, setReactionOverlay] = useState<string | null>(null);
@@ -132,17 +157,64 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		tttGameRef.current = tttGame;
 	}, [tttGame]);
 
-	const checkTttWinner = (b: ("X" | "O" | null)[]) => {
-		const lines = [
-			[0, 1, 2], [3, 4, 5], [6, 7, 8],
-			[0, 3, 6], [1, 4, 7], [2, 5, 8],
-			[0, 4, 8], [2, 4, 6]
-		];
-		for (let i = 0; i < lines.length; i++) {
-			const [x, y, z] = lines[i];
-			if (b[x] && b[x] === b[y] && b[x] === b[z]) return b[x];
+	const checkCaroWinner = (b: ("X" | "O" | null)[]) => {
+		const SIZE = 15;
+		for (let r = 0; r < SIZE; r++) {
+			for (let c = 0; c < SIZE; c++) {
+				const idx = r * SIZE + c;
+				const symbol = b[idx];
+				if (!symbol) continue;
+
+				// Check horizontal right
+				if (c <= SIZE - 5) {
+					if (
+						b[idx + 1] === symbol &&
+						b[idx + 2] === symbol &&
+						b[idx + 3] === symbol &&
+						b[idx + 4] === symbol
+					) {
+						return { winner: symbol, line: [idx, idx + 1, idx + 2, idx + 3, idx + 4] };
+					}
+				}
+
+				// Check vertical down
+				if (r <= SIZE - 5) {
+					if (
+						b[idx + SIZE] === symbol &&
+						b[idx + SIZE * 2] === symbol &&
+						b[idx + SIZE * 3] === symbol &&
+						b[idx + SIZE * 4] === symbol
+					) {
+						return { winner: symbol, line: [idx, idx + SIZE, idx + SIZE * 2, idx + SIZE * 3, idx + SIZE * 4] };
+					}
+				}
+
+				// Check diagonal down-right
+				if (r <= SIZE - 5 && c <= SIZE - 5) {
+					if (
+						b[idx + SIZE + 1] === symbol &&
+						b[idx + SIZE * 2 + 2] === symbol &&
+						b[idx + SIZE * 3 + 3] === symbol &&
+						b[idx + SIZE * 4 + 4] === symbol
+					) {
+						return { winner: symbol, line: [idx, idx + SIZE + 1, idx + SIZE * 2 + 2, idx + SIZE * 3 + 3, idx + SIZE * 4 + 4] };
+					}
+				}
+
+				// Check diagonal down-left
+				if (r <= SIZE - 5 && c >= 4) {
+					if (
+						b[idx + SIZE - 1] === symbol &&
+						b[idx + SIZE * 2 - 2] === symbol &&
+						b[idx + SIZE * 3 - 3] === symbol &&
+						b[idx + SIZE * 4 - 4] === symbol
+					) {
+						return { winner: symbol, line: [idx, idx + SIZE - 1, idx + SIZE * 2 - 2, idx + SIZE * 3 - 3, idx + SIZE * 4 - 4] };
+					}
+				}
+			}
 		}
-		return null;
+		return { winner: null, line: null };
 	};
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -230,10 +302,62 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				);
 			} else if (data.type === "typing") {
 				setIsStrangerTyping(!!data.isTyping);
+			} else if (data.type === "sketch_invite") {
+				sound.playMessage();
+				setSketchBattle((prev) => ({ ...prev, status: "invited" }));
+			} else if (data.type === "sketch_decline") {
+				setMessages((prev) => [
+					...prev,
+					{
+						id: `sys-sketch-dec-${Date.now()}`,
+						sender: "system",
+						text: `ĐỐI THỦ ĐÃ TỪ CHỐI THAM GIA SKETCH BATTLE.`,
+						timestamp: Date.now(),
+					},
+				]);
+				setSketchBattle((prev) => ({
+					...prev,
+					status: "idle",
+					prompt: "",
+					opponentVote: null,
+				}));
+				setShowSketch(false);
+				setIncomingSketch(null);
+			} else if (data.type === "sketch_start") {
+				setSketchBattle((prev) => ({
+					...prev,
+					status: "playing",
+					prompt: data.prompt,
+					opponentVote: null,
+				}));
+				setIncomingSketch(null);
+				setShowSketch(true);
+			} else if (data.type === "sketch_vote") {
+				const award = data.rating === "love" ? 100 : 50;
+				setGame((g) => ({ ...g, myCoins: g.myCoins + award }));
+				setSketchBattle((prev) => ({
+					...prev,
+					opponentVote: data.rating,
+				}));
+			} else if (data.type === "sketch_quit") {
+				setSketchBattle((prev) => ({
+					...prev,
+					status: "idle",
+					prompt: "",
+					opponentVote: null,
+				}));
+				setShowSketch(false);
+				setIncomingSketch(null);
 			} else if (data.type === "sketch_data") {
 				setIncomingSketch(data.sketch);
 				setShowSketch(true);
 			} else if (data.type === "sketch_close") {
+				setSketchBattle((prev) => ({
+					...prev,
+					status: "idle",
+					prompt: "",
+					opponentVote: null,
+				}));
 				setShowSketch(false);
 				setIncomingSketch(null);
 			} else if (data.type === "game_invite") {
@@ -343,8 +467,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				setTttGame((prev) => ({
 					...prev,
 					status: "idle",
-					board: Array(9).fill(null),
+					board: Array(225).fill(null),
 					winner: null,
+					winningLine: null,
 				}));
 			} else if (data.type === "game_ttt_start") {
 				setTttGame((prev) => ({
@@ -352,20 +477,20 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 					status: "playing",
 					symbol: data.firstTurn ? "O" : "X",
 					isMyTurn: !!data.firstTurn,
-					board: Array(9).fill(null),
+					board: Array(225).fill(null),
 					winner: null,
+					winningLine: null,
 				}));
 			} else if (data.type === "game_ttt_move") {
 				sound.playMessage();
 				setTttGame((prev) => {
 					const newBoard = [...prev.board];
 					newBoard[data.cellIndex] = data.symbol;
-					const win = checkTttWinner(newBoard);
-					const isWin = win === prev.symbol;
-					const isDraw = !win && newBoard.every(c => c !== null);
+					const { winner: winSymbol, line: winLine } = checkCaroWinner(newBoard);
+					const isDraw = !winSymbol && newBoard.every(c => c !== null);
 					let winner: "me" | "stranger" | "draw" | null = null;
 					let newStatus = prev.status;
-					if (win) {
+					if (winSymbol) {
 						winner = "stranger";
 						newStatus = "ended";
 						setGame(g => ({ ...g, myCoins: g.myCoins - 50 }));
@@ -379,6 +504,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 						isMyTurn: true,
 						status: newStatus,
 						winner,
+						winningLine: winLine || null,
 					};
 				});
 			} else if (data.type === "game_ttt_quit") {
@@ -828,11 +954,12 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		p2p.sendTttStart(!myFirst);
 		setTttGame((prev) => ({
 			...prev,
-			board: Array(9).fill(null),
+			board: Array(225).fill(null),
 			symbol: myFirst ? "X" : "O",
 			isMyTurn: myFirst,
 			status: "playing",
 			winner: null,
+			winningLine: null,
 		}));
 	};
 
@@ -841,8 +968,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		setTttGame((prev) => ({
 			...prev,
 			status: "idle",
-			board: Array(9).fill(null),
+			board: Array(225).fill(null),
 			winner: null,
+			winningLine: null,
 		}));
 	};
 
@@ -852,9 +980,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		setTttGame((prev) => {
 			const newBoard = [...prev.board];
 			newBoard[cellIndex] = prev.symbol;
-			const win = checkTttWinner(newBoard);
-			const isWin = win === prev.symbol;
-			const isDraw = !win && newBoard.every(c => c !== null);
+			const { winner: winSymbol, line: winLine } = checkCaroWinner(newBoard);
+			const isWin = winSymbol === prev.symbol;
+			const isDraw = !winSymbol && newBoard.every(c => c !== null);
 			let winner: "me" | "stranger" | "draw" | null = null;
 			let newStatus = prev.status;
 			if (isWin) {
@@ -871,6 +999,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				isMyTurn: false,
 				status: newStatus,
 				winner,
+				winningLine: winLine || null,
 			};
 		});
 	};
@@ -882,9 +1011,69 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		setTttGame((prev) => ({
 			...prev,
 			status: "idle",
-			board: Array(9).fill(null),
+			board: Array(225).fill(null),
 			winner: null,
+			winningLine: null,
 		}));
+	};
+
+	const inviteSketchBattle = () => {
+		if (sketchBattle.status !== "idle") return;
+		sound.playClick();
+		p2p.sendSketchInvite();
+		setSketchBattle((prev) => ({ ...prev, status: "pendingInvite" }));
+		setShowAppMenu(false);
+		setMessages((prev) => [
+			...prev,
+			{
+				id: `sys-sketch-inv-${Date.now()}`,
+				sender: "system",
+				text: `✦ ĐÃ GỬI LỜI MỜI VẼ TRANH THI ĐẤU ĐẾN ${strangerAlias.toUpperCase()}...`,
+				timestamp: Date.now(),
+			},
+		]);
+	};
+
+	const handleSketchAccept = () => {
+		if (sketchBattle.status !== "invited") return;
+		sound.playClick();
+		const prompt = getRandomPrompt();
+		p2p.sendSketchStart(prompt);
+		setSketchBattle((prev) => ({
+			...prev,
+			status: "playing",
+			prompt,
+			opponentVote: null,
+		}));
+		setIncomingSketch(null);
+		setShowSketch(true);
+	};
+
+	const handleSketchDecline = () => {
+		sound.playClick();
+		p2p.sendSketchDecline();
+		setSketchBattle((prev) => ({
+			...prev,
+			status: "idle",
+			prompt: "",
+			opponentVote: null,
+		}));
+	};
+
+	const onSketchLocalVote = (vote: "like" | "love") => {
+		p2p.sendSketchVote(vote);
+	};
+
+	const handleSketchQuit = () => {
+		p2p.sendSketchQuit();
+		setSketchBattle((prev) => ({
+			...prev,
+			status: "idle",
+			prompt: "",
+			opponentVote: null,
+		}));
+		setShowSketch(false);
+		setIncomingSketch(null);
 	};
 
 	const handleGameQuit = () => {
@@ -1132,20 +1321,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 					<div ref={messagesEndRef} />
 				</div>
 
-				{/* SKETCH LAYER */}
-				{showSketch && (
-					<div className="absolute inset-x-0 bottom-0 md:inset-auto md:right-4 md:top-4 z-[350] bg-slate-900 p-4 border-t-4 border-indigo-900 md:pixel-border animate-in slide-in-from-bottom md:slide-in-from-right duration-300 flex flex-col items-center">
-						<SketchCanvas
-							onDraw={(b) => p2p.sendSketch(b)}
-							incomingSketch={incomingSketch}
-						/>
-						<button
-							onClick={handleCloseSketch}
-							className="w-full bg-rose-900 text-xs py-2 text-white border-4 border-rose-700 mt-2 hover:bg-rose-800 font-bold uppercase">
-							ĐÓNG BẢNG VẼ
-						</button>
-					</div>
-				)}
+
 
 				{/* GAME LAYER */}
 				<div className="absolute inset-0 z-[200] pointer-events-none">
@@ -1266,6 +1442,62 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 								incomingEmoji={incomingTttEmoji}
 								onMove={onTttLocalMove}
 								onExit={handleTttQuit}
+								winningLine={tttGame.winningLine}
+							/>
+						</div>
+					)}
+
+					{/* Sketch Battle game views */}
+					{sketchBattle.status === "invited" && (
+						<div className="absolute inset-0 bg-black/85 flex items-center justify-center p-8 backdrop-blur-sm pointer-events-auto z-[250]">
+							<div className="bg-slate-900 pixel-border p-6 text-center space-y-4 shadow-[0_0_50px_rgba(0,0,0,1)] animate-in zoom-in duration-300">
+								<div className="text-4xl">🎨</div>
+								<h2 className="text-xl uppercase tracking-widest text-white">
+									SKETCH BATTLE
+								</h2>
+								<p className="text-slate-400 text-xs">
+									"{strangerAlias}" thách đấu bạn vẽ tranh thi đấu.
+								</p>
+								<div className="flex gap-4 justify-center">
+									<PixelButton
+										variant="secondary"
+										onClick={handleSketchDecline}>
+										TỪ CHỐI
+									</PixelButton>
+									<PixelButton
+										variant="primary"
+										onClick={handleSketchAccept}>
+										CHẤP NHẬN
+									</PixelButton>
+								</div>
+							</div>
+						</div>
+					)}
+					{sketchBattle.status === "pendingInvite" && (
+						<div className="absolute inset-0 bg-black/85 flex items-center justify-center p-8 backdrop-blur-sm pointer-events-auto z-[250]">
+							<div className="bg-slate-900 pixel-border p-6 text-center space-y-4 shadow-[0_0_50px_rgba(0,0,0,1)] animate-in zoom-in duration-300">
+								<div className="text-4xl">🎨</div>
+								<h2 className="text-xl uppercase tracking-widest text-white">
+									ĐANG CHỜ ĐỐI THỦ
+								</h2>
+								<PixelButton
+									variant="secondary"
+									onClick={handleSketchDecline}>
+									HỦY LỜI MỜI
+								</PixelButton>
+							</div>
+						</div>
+					)}
+					{sketchBattle.status === "playing" && showSketch && (
+						<div className="absolute inset-0 pointer-events-auto z-[200]">
+							<SketchBattle
+								prompt={sketchBattle.prompt}
+								incomingSketch={incomingSketch}
+								onDraw={(b) => p2p.sendSketch(b)}
+								onExit={handleSketchQuit}
+								opponentVote={sketchBattle.opponentVote}
+								onVote={onSketchLocalVote}
+								myCoins={game.myCoins}
 							/>
 						</div>
 					)}
@@ -1303,13 +1535,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 							</button>
 							<button
 								type="button"
-								onClick={() => {
-									setShowSketch(true);
-									setShowAppMenu(false);
-									sound.playClick();
-								}}
+								onClick={inviteSketchBattle}
 								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
-								🎨 VẼ TRANH
+								🎨 SKETCH BATTLE
 							</button>
 							<button
 								type="button"

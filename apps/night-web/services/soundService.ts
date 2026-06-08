@@ -55,6 +55,25 @@ class SoundManager {
 		osc.stop(ctx.currentTime + 0.3);
 	}
 
+	public playWin() {
+		const ctx = this.init();
+		const now = ctx.currentTime;
+		const notes = [261.63, 329.63, 392.00, 523.25]; // C4, E4, G4, C5 arpeggio
+		notes.forEach((freq, index) => {
+			const osc = ctx.createOscillator();
+			const gain = ctx.createGain();
+			osc.type = "square";
+			osc.frequency.setValueAtTime(freq, now + index * 0.08);
+			gain.gain.setValueAtTime(0, now + index * 0.08);
+			gain.gain.linearRampToValueAtTime(0.03, now + index * 0.08 + 0.02);
+			gain.gain.exponentialRampToValueAtTime(0.001, now + index * 0.08 + 0.15);
+			osc.connect(gain);
+			gain.connect(ctx.destination);
+			osc.start(now + index * 0.08);
+			osc.stop(now + index * 0.08 + 0.15);
+		});
+	}
+
 	private playKick() {
 		if (!this.ctx) return;
 		const osc = this.ctx.createOscillator();

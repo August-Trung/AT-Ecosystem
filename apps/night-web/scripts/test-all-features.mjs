@@ -381,6 +381,130 @@ assert.equal(checkDuplicate("https://youtu.be/otherVideoId", mockLibrary), false
 console.log("✅ Jukebox Helpers & Sync Tests passed.");
 
 
+// ----------------------------------------------------
+// TEST SUITE 5: Caro 15x15 Win Scanning
+// ----------------------------------------------------
+console.log("\n---------------------------------------");
+console.log("RUNNING: Caro 15x15 Win Scanning Tests...");
+console.log("---------------------------------------");
+
+const checkCaroWinner = (b) => {
+	const SIZE = 15;
+	for (let r = 0; r < SIZE; r++) {
+		for (let c = 0; c < SIZE; c++) {
+			const idx = r * SIZE + c;
+			const symbol = b[idx];
+			if (!symbol) continue;
+
+			// Check horizontal right
+			if (c <= SIZE - 5) {
+				if (
+					b[idx + 1] === symbol &&
+					b[idx + 2] === symbol &&
+					b[idx + 3] === symbol &&
+					b[idx + 4] === symbol
+				) {
+					return { winner: symbol, line: [idx, idx + 1, idx + 2, idx + 3, idx + 4] };
+				}
+			}
+
+			// Check vertical down
+			if (r <= SIZE - 5) {
+				if (
+					b[idx + SIZE] === symbol &&
+					b[idx + SIZE * 2] === symbol &&
+					b[idx + SIZE * 3] === symbol &&
+					b[idx + SIZE * 4] === symbol
+				) {
+					return { winner: symbol, line: [idx, idx + SIZE, idx + SIZE * 2, idx + SIZE * 3, idx + SIZE * 4] };
+				}
+			}
+
+			// Check diagonal down-right
+			if (r <= SIZE - 5 && c <= SIZE - 5) {
+				if (
+					b[idx + SIZE + 1] === symbol &&
+					b[idx + SIZE * 2 + 2] === symbol &&
+					b[idx + SIZE * 3 + 3] === symbol &&
+					b[idx + SIZE * 4 + 4] === symbol
+				) {
+					return { winner: symbol, line: [idx, idx + SIZE + 1, idx + SIZE * 2 + 2, idx + SIZE * 3 + 3, idx + SIZE * 4 + 4] };
+				}
+			}
+
+			// Check diagonal down-left
+			if (r <= SIZE - 5 && c >= 4) {
+				if (
+					b[idx + SIZE - 1] === symbol &&
+					b[idx + SIZE * 2 - 2] === symbol &&
+					b[idx + SIZE * 3 - 3] === symbol &&
+					b[idx + SIZE * 4 - 4] === symbol
+				) {
+					return { winner: symbol, line: [idx, idx + SIZE - 1, idx + SIZE * 2 - 2, idx + SIZE * 3 - 3, idx + SIZE * 4 - 4] };
+				}
+			}
+		}
+	}
+	return { winner: null, line: null };
+};
+
+const board = Array(225).fill(null);
+
+// Test empty board
+assert.deepEqual(checkCaroWinner(board), { winner: null, line: null });
+
+// Test horizontal win
+const boardH = [...board];
+boardH[15] = "X"; boardH[16] = "X"; boardH[17] = "X"; boardH[18] = "X"; boardH[19] = "X";
+assert.deepEqual(checkCaroWinner(boardH), { winner: "X", line: [15, 16, 17, 18, 19] });
+
+// Test vertical win
+const boardV = [...board];
+boardV[5] = "O"; boardV[20] = "O"; boardV[35] = "O"; boardV[50] = "O"; boardV[65] = "O";
+assert.deepEqual(checkCaroWinner(boardV), { winner: "O", line: [5, 20, 35, 50, 65] });
+
+// Test diagonal down-right win
+const boardDR = [...board];
+boardDR[0] = "X"; boardDR[16] = "X"; boardDR[32] = "X"; boardDR[48] = "X"; boardDR[64] = "X";
+assert.deepEqual(checkCaroWinner(boardDR), { winner: "X", line: [0, 16, 32, 48, 64] });
+
+// Test diagonal down-left win
+const boardDL = [...board];
+boardDL[4] = "O"; boardDL[18] = "O"; boardDL[32] = "O"; boardDL[46] = "O"; boardDL[60] = "O";
+assert.deepEqual(checkCaroWinner(boardDL), { winner: "O", line: [4, 18, 32, 46, 60] });
+
+console.log("✅ Caro 15x15 Win Scanning Tests passed.");
+
+
+// ----------------------------------------------------
+// TEST SUITE 6: Jukebox Request Queue
+// ----------------------------------------------------
+console.log("\n---------------------------------------");
+console.log("RUNNING: Jukebox Request Queue Tests...");
+console.log("---------------------------------------");
+
+// Test queue serialization and operations
+const mockQueue = [];
+const addToQueueAction = (queue, item) => [...queue, item];
+const removeFromQueueAction = (queue, itemId) => queue.filter(item => item.id !== itemId);
+
+const qItem1 = { id: "track-1", title: "Song 1" };
+const qItem2 = { id: "track-2", title: "Song 2" };
+
+let q = mockQueue;
+q = addToQueueAction(q, qItem1);
+q = addToQueueAction(q, qItem2);
+
+assert.equal(q.length, 2);
+assert.equal(q[0].id, "track-1");
+
+q = removeFromQueueAction(q, "track-1");
+assert.equal(q.length, 1);
+assert.equal(q[0].id, "track-2");
+
+console.log("✅ Jukebox Request Queue Tests passed.");
+
+
 // Run async tests
 (async () => {
 	try {

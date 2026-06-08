@@ -15,6 +15,7 @@ interface TicTacToeGameProps {
 	onMove: (cellIndex: number) => void;
 	onExit: () => void;
 	onPass?: () => void;
+	winningLine?: number[] | null;
 }
 
 const TicTacToeGame: React.FC<TicTacToeGameProps> = ({
@@ -27,6 +28,7 @@ const TicTacToeGame: React.FC<TicTacToeGameProps> = ({
 	incomingEmoji,
 	onMove,
 	onExit,
+	winningLine,
 }) => {
 	const [localEmoji, setLocalEmoji] = useState<string | null>(null);
 	const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -101,7 +103,7 @@ const TicTacToeGame: React.FC<TicTacToeGameProps> = ({
 			{/* Top Bar */}
 			<div className="flex justify-between items-center mb-4 bg-slate-900/60 p-2 rounded-lg border border-indigo-900/40 shadow-lg">
 				<span className="text-indigo-400 uppercase tracking-widest text-[11px] font-black">
-					CARO XO (50💰)
+					CARO 15x15 (50💰)
 				</span>
 				<div className="flex gap-2 items-center">
 					<div className="text-yellow-500 font-bold text-[11px] uppercase tracking-widest bg-black/40 px-3 py-1.5 pixel-border border-yellow-700">
@@ -118,19 +120,27 @@ const TicTacToeGame: React.FC<TicTacToeGameProps> = ({
 
 			{/* Board area */}
 			<div className="flex-1 flex flex-col items-center justify-center">
-				<div className="grid grid-cols-3 gap-3 w-full max-w-[280px] aspect-square bg-[#0a0a20]/80 p-3 pixel-border border-indigo-950/60 rounded-xl relative shadow-2xl">
-					{board.map((cell, index) => (
-						<button
-							key={index}
-							onClick={() => handleCellClick(index)}
-							disabled={!isMyTurn || cell !== null}
-							className={`aspect-square flex items-center justify-center text-4xl font-black rounded-lg border-4 border-slate-800 transition-all select-none
-								${cell === null && isMyTurn ? "bg-slate-900/40 hover:bg-slate-850/60 border-indigo-900 cursor-pointer active:scale-95" : cell === null ? "bg-slate-950/20 border-slate-900 cursor-not-allowed" : "bg-slate-900 border-slate-800"}
-								${cell === "X" ? "text-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.2)]" : "text-rose-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]"}`}
-						>
-							{cell}
-						</button>
-					))}
+				<div 
+					className="grid gap-[2px] w-full max-w-[340px] aspect-square bg-[#0a0a20]/80 p-2 pixel-border border-indigo-950/60 rounded-xl relative shadow-2xl overflow-hidden"
+					style={{ gridTemplateColumns: "repeat(15, minmax(0, 1fr))" }}
+				>
+					{board.map((cell, index) => {
+						const isWinningCell = winningLine && winningLine.includes(index);
+						return (
+							<button
+								key={index}
+								onClick={() => handleCellClick(index)}
+								disabled={!isMyTurn || cell !== null}
+								className={`aspect-square flex items-center justify-center text-[10px] font-black border border-slate-900/40 transition-all select-none
+									${cell === null && isMyTurn ? "bg-slate-900/40 hover:bg-slate-850/60 cursor-pointer active:scale-95" : cell === null ? "bg-slate-950/10 cursor-not-allowed" : "bg-slate-900"}
+									${isWinningCell ? "bg-yellow-500/40 border-yellow-400 animate-pulse text-yellow-300 ring-1 ring-yellow-400 text-[11px] font-black" : ""}
+									${cell === "X" && !isWinningCell ? "text-indigo-400 font-black" : ""}
+									${cell === "O" && !isWinningCell ? "text-rose-400 font-black" : ""}`}
+							>
+								{cell}
+							</button>
+						);
+					})}
 				</div>
 			</div>
 

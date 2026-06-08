@@ -185,6 +185,14 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 		libraryRef.current = library;
 	}, [library]);
 
+	const [queue, setQueue] = useState<JukeboxItem[]>([]);
+	const [activeTab, setActiveTab] = useState<"library" | "queue">("library");
+	const queueRef = useRef<JukeboxItem[]>([]);
+
+	useEffect(() => {
+		queueRef.current = queue;
+	}, [queue]);
+
 	const playerRef = useRef<any>(null);
 	const playerContainerId = "youtube-player-iframe";
 	const isSyncingFromPeer = useRef(false);
@@ -504,6 +512,19 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 					} else if (state === 2) {
 						setIsPlaying(false);
 						broadcastSync("pause");
+					} else if (state === 0) {
+						// Song ended, play next queued song if available
+						const currentQueue = queueRef.current;
+						if (currentQueue.length > 0) {
+							const nextItem = currentQueue[0];
+							const updatedQueue = currentQueue.slice(1);
+							setQueue(updatedQueue);
+							playItem(nextItem);
+							broadcastSync("queue_update", undefined, updatedQueue);
+						} else {
+							setIsPlaying(false);
+							broadcastSync("pause");
+						}
 					}
 					syncPlaylistState();
 				},
@@ -561,8 +582,22 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 		p2p.sendJukeboxSync(JSON.stringify(payload));
 	};
 
-	const handleAddMusic = (e: React.FormEvent) => {
-		e.preventDefault();
+	const addToQueue = (item: JukeboxItem) => {
+		sound.playClick();
+		const updated = [...queue, item];
+		setQueue(updated);
+		broadcastSync("queue_update", undefined, updated);
+	};
+
+	const removeFromQueue = (itemId: string, e: React.MouseEvent) => {
+		e.stopPropagation();
+		sound.playClick();
+		const updated = queue.filter((i) => i.id !== itemId);
+		setQueue(updated);
+		broadcastSync("queue_update", undefined, updated);
+	};
+
+	const handleAddMusicAction = (playNow: boolean) => {
 		setErrorMsg("");
 		if (!urlInput.trim()) return;
 
@@ -604,8 +639,15 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 		// Phát sóng cập nhật playlist cho bạn chat
 		broadcastPlaylistUpdate(updated);
 
-		// Tự động phát ngay sau khi thêm
-		playItem(newItem);
+		if (playNow) {
+			// Tự động phát ngay sau khi thêm
+			playItem(newItem);
+		} else {
+			// Thêm vào hàng đợi
+			const updatedQueue = [...queue, newItem];
+			setQueue(updatedQueue);
+			broadcastSync("queue_update", undefined, updatedQueue);
+		}
 
 		// Kích hoạt việc cào dữ liệu/oEmbed ở background
 		fetchMetadataInBackground(newItem);
@@ -757,7 +799,7 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 		}
 	};
 
-	const broadcastSync = (action: string, item?: JukeboxItem) => {
+	const broadcastSync = (action: string, item?: JukeboxItem, customQueue?: JukeboxItem[]) => {
 		if (isSyncingFromPeer.current) return; // Prevent loop echo back to peer
 		if (!p2p.isConnected()) return;
 
@@ -782,6 +824,7 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 			videoId: activeItem?.videoId,
 			playlistId: activeItem?.playlistId,
 			playlistIndex,
+			queue: customQueue || queueRef.current,
 		};
 		p2p.sendJukeboxSync(JSON.stringify(payload));
 	};
@@ -791,6 +834,9 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 		isSyncingFromPeer.current = true;
 
 		try {
+			if (sync.queue && Array.isArray(sync.queue)) {
+				setQueue(sync.queue);
+			}
 			if (sync.action === "playlist_update" && Array.isArray(sync.playlist)) {
 				const filtered = sync.playlist.filter((item: any) => item && typeof item.id === 'string' && item.id.startsWith('user-'));
 				setLibrary(filtered);
@@ -1056,7 +1102,7 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 			)}
 
 			{/* Paste link form */}
-			<form onSubmit={handleAddMusic} className="flex gap-2">
+			<form onSubmit={(e) => e.preventDefault()} className="flex gap-2">
 				<input
 					type="text"
 					value={urlInput}
@@ -1065,49 +1111,118 @@ const PixelJukebox: React.FC<PixelJukeboxProps> = ({
 					className="flex-1 bg-slate-950 border-2 border-slate-800 text-xs px-2 py-1.5 focus:outline-none text-white font-mono placeholder:text-slate-600"
 				/>
 				<button
-					type="submit"
-					className="bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border-2 border-indigo-800 px-3 py-1.5 text-xs font-bold uppercase pixel-border"
+					type="button"
+					onClick={() => handleAddMusicAction(true)}
+					className="bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border-2 border-indigo-800 px-2.5 py-1.5 text-[10px] font-bold uppercase pixel-border animate-pulse"
 				>
-					THÊM
+					PHÁT NGAY
+				</button>
+				<button
+					type="button"
+					onClick={() => handleAddMusicAction(false)}
+					className="bg-slate-900 hover:bg-slate-850 text-emerald-400 border-2 border-slate-800 px-2.5 py-1.5 text-[10px] font-bold uppercase pixel-border"
+				>
+					+ HÀNG ĐỢI
 				</button>
 			</form>
-			{/* Custom Library List */}
+
+			{/* Tabs Header */}
+			<div className="flex gap-2 border-b-2 border-slate-800 pb-1 mt-1">
+				<button
+					type="button"
+					onClick={() => setActiveTab("library")}
+					className={`flex-1 py-1 text-xs font-bold uppercase tracking-wider ${activeTab === "library" ? "text-indigo-400 border-b-2 border-indigo-500" : "text-slate-500 hover:text-slate-400"}`}
+				>
+					Thư Viện ({library.length})
+				</button>
+				<button
+					type="button"
+					onClick={() => setActiveTab("queue")}
+					className={`flex-1 py-1 text-xs font-bold uppercase tracking-wider ${activeTab === "queue" ? "text-indigo-400 border-b-2 border-indigo-500" : "text-slate-500 hover:text-slate-400"}`}
+				>
+					Hàng Đợi ({queue.length})
+				</button>
+			</div>
+
+			{/* Custom Library / Queue Lists */}
 			<div className="flex-1 max-h-[180px] overflow-y-auto pr-1 flex flex-col gap-1.5 scrollbar-thin font-sans">
-				{library.length > 0 ? (
-					<>
-						<p className="text-[9px] text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-1 mt-1">
-							✦ DANH SÁCH BÀI HÁT (LOCAL STORAGE)
-						</p>
-						{library.map((item) => (
-							<div
-								key={item.id}
-								onClick={() => playItem(item)}
-								className={`flex justify-between items-center text-xs p-1.5 bg-slate-950/40 border border-slate-850 hover:bg-indigo-950/20 cursor-pointer transition-colors ${activeItem?.id === item.id ? "border-indigo-600 text-indigo-300" : "text-slate-400"}`}
-							>
-								<span className="truncate flex-1 pr-2">{item.title}</span>
-								<div className="flex gap-2">
+				{activeTab === "library" ? (
+					library.length > 0 ? (
+						<>
+							<p className="text-[9px] text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-1 mt-0.5">
+								✦ DANH SÁCH BÀI HÁT (LOCAL STORAGE)
+							</p>
+							{library.map((item) => (
+								<div
+									key={item.id}
+									onClick={() => playItem(item)}
+									className={`flex justify-between items-center text-xs p-1.5 bg-slate-950/40 border border-slate-850 hover:bg-indigo-950/20 cursor-pointer transition-colors ${activeItem?.id === item.id ? "border-indigo-600 text-indigo-300" : "text-slate-400"}`}
+								>
+									<span className="truncate flex-1 pr-2">{item.title}</span>
+									<div className="flex gap-2">
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												addToQueue(item);
+											}}
+											className="text-[9px] text-emerald-450 hover:text-emerald-350 font-bold uppercase"
+										>
+											[+Q]
+										</button>
+										<button
+											type="button"
+											onClick={(e) => handleRenameMusic(item, e)}
+											className="text-[9px] text-indigo-400 hover:text-indigo-350 font-bold uppercase"
+										>
+											[ĐỔI]
+										</button>
+										<button
+											type="button"
+											onClick={(e) => handleDeleteMusic(item.id, e)}
+											className="text-[9px] text-rose-500 hover:text-rose-400 font-bold uppercase"
+										>
+											[XÓA]
+										</button>
+									</div>
+								</div>
+							))}
+						</>
+					) : (
+						<div className="text-center text-slate-500 text-xs py-6 uppercase tracking-wider leading-relaxed">
+							Chưa có bài hát nào.<br />Hãy dán link YouTube ở trên để thêm!
+						</div>
+					)
+				) : (
+					queue.length > 0 ? (
+						<>
+							<p className="text-[9px] text-slate-500 uppercase tracking-widest border-b border-slate-800 pb-1 mt-0.5">
+								✦ BÀI HÁT SẮP PHÁT (REAL-TIME QUEUE)
+							</p>
+							{queue.map((item, index) => (
+								<div
+									key={`${item.id}-${index}`}
+									className="flex justify-between items-center text-xs p-1.5 bg-slate-950/40 border border-slate-850 hover:bg-indigo-950/20 transition-colors text-slate-400"
+								>
+									<span className="truncate flex-1 pr-2">
+										<span className="text-indigo-400 font-bold font-mono mr-1.5">{index + 1}.</span>
+										{item.title}
+									</span>
 									<button
 										type="button"
-										onClick={(e) => handleRenameMusic(item, e)}
-										className="text-[9px] text-indigo-400 hover:text-indigo-350 font-bold uppercase"
-									>
-										[ĐỔI TÊN]
-									</button>
-									<button
-										type="button"
-										onClick={(e) => handleDeleteMusic(item.id, e)}
+										onClick={(e) => removeFromQueue(item.id, e)}
 										className="text-[9px] text-rose-500 hover:text-rose-400 font-bold uppercase"
 									>
 										[XÓA]
 									</button>
 								</div>
-							</div>
-						))}
-					</>
-				) : (
-					<div className="text-center text-slate-500 text-xs py-6 uppercase tracking-wider leading-relaxed">
-						Chưa có bài hát nào.<br />Hãy dán link YouTube ở trên để thêm!
-					</div>
+							))}
+						</>
+					) : (
+						<div className="text-center text-slate-500 text-xs py-6 uppercase tracking-wider leading-relaxed">
+							Hàng đợi phát nhạc trống.<br />Hãy chọn [+Q] từ Thư Viện hoặc dán link!
+						</div>
+					)
 				)}
 			</div>
 		</div>
