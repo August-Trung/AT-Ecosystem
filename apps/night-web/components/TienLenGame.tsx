@@ -173,7 +173,7 @@ const TienLenGame: React.FC<TienLenGameProps> = ({
 				key={card.id}
 				onClick={onClick}
 				className={`w-[70px] h-[105px] md:w-[85px] md:h-[125px] flex-shrink-0 pixel-border bg-slate-50 flex flex-col justify-between p-1.5 cursor-pointer transition-all transform select-none relative
-          ${isSelected ? "border-indigo-600 -translate-y-8 ring-4 ring-indigo-500/30 z-20 shadow-2xl scale-105" : "hover:-translate-y-2 z-10"}
+          ${isSelected ? "border-indigo-600 -translate-y-6 md:-translate-y-8 ring-4 ring-indigo-500/30 z-20 shadow-2xl scale-105" : "hover:-translate-y-2 z-10"}
           ${royal ? royal.borderColor : isSelected ? "border-indigo-600" : "border-slate-300"}
         `}>
 				{/* Góc trên bên trái: Rank + Suit nhỏ */}
@@ -266,7 +266,7 @@ const TienLenGame: React.FC<TienLenGameProps> = ({
 			<style>{`
         @keyframes float-up { 0% { opacity: 0; transform: translateY(20px) scale(0.5); } 20% { opacity: 1; transform: translateY(0) scale(1.2); } 80% { opacity: 1; transform: translateY(-40px) scale(1); } 100% { opacity: 0; transform: translateY(-80px) scale(0.8); } }
         .emoji-float { animation: float-up 2s forwards ease-out; position: absolute; font-size: 3rem; pointer-events: none; z-index: 150; }
-        .card-container-scroll { display: flex; gap: 0.75rem; padding: 3rem 1.5rem 1.5rem 1.5rem; overflow-x: auto; width: 100%; scrollbar-width: thin; scrollbar-color: #4f46e5 #020617; -webkit-overflow-scrolling: touch; }
+        .card-container-scroll { display: flex; gap: 0.5rem sm:gap-0.75rem; padding: 2.25rem 1rem 1rem 1rem; sm:padding: 3rem 1.5rem 1.5rem 1.5rem; overflow-x: auto; width: 100%; scrollbar-width: thin; scrollbar-color: #4f46e5 #020617; -webkit-overflow-scrolling: touch; }
         .card-container-scroll::-webkit-scrollbar { height: 6px; display: block; }
         .card-container-scroll::-webkit-scrollbar-track { background: #020617; border-radius: 10px; margin: 0 10px; }
         .card-container-scroll::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 10px; border: 1px solid #020617; }
@@ -353,30 +353,30 @@ const TienLenGame: React.FC<TienLenGameProps> = ({
 					)}
 				</div>
 
-				<div className="w-full flex justify-between items-center bg-slate-950 p-3 pixel-border border-indigo-900/40 shadow-2xl relative">
-					<div className="flex flex-col">
+				<div className="w-full flex flex-col sm:flex-row justify-between items-center bg-slate-950 p-2 sm:p-3 pixel-border border-indigo-900/40 shadow-2xl relative gap-2">
+					<div className="flex flex-col text-center sm:text-left">
 						<span
-							className={`text-sm md:text-lg uppercase font-black tracking-[0.2em] ${isMyTurn ? "text-green-400 animate-pulse" : "text-slate-700"}`}>
+							className={`text-xs sm:text-lg uppercase font-black tracking-[0.2em] ${isMyTurn ? "text-green-400 animate-pulse" : "text-slate-700"}`}>
 							{isMyTurn ? "LƯỢT CỦA BẠN" : "ĐỢI ĐỐI THỦ..."}
 						</span>
 					</div>
-					<div className="flex gap-3 items-center">
+					<div className="flex gap-2 sm:gap-3 items-center justify-center w-full sm:w-auto">
 						<div className="relative" ref={pickerRef}>
 							<button
 								onClick={() => {
 									sound.playClick();
 									setShowEmojiPicker(!showEmojiPicker);
 								}}
-								className="w-10 h-10 flex items-center justify-center text-2xl bg-slate-900/80 pixel-border border-indigo-900 hover:bg-slate-800 transition-all rounded-lg shadow-xl">
+								className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-lg sm:text-2xl bg-slate-900/80 pixel-border border-indigo-900 hover:bg-slate-800 transition-all rounded-lg shadow-xl">
 								{showEmojiPicker ? "❌" : "💬"}
 							</button>
 							{showEmojiPicker && (
-								<div className="absolute bottom-full mb-4 left-1/2 -translate-x-1/2 flex gap-3 bg-slate-900 pixel-border border-indigo-600 p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] animate-in slide-in-from-bottom-2 duration-200 z-[250]">
+								<div className="absolute bottom-full mb-3 right-0 sm:left-1/2 sm:-translate-x-1/2 flex gap-2 bg-slate-900 pixel-border border-indigo-600 p-2 shadow-[0_0_30px_rgba(0,0,0,0.9)] animate-in slide-in-from-bottom-2 duration-200 z-[250] rounded-lg">
 									{QUICK_GAME_EMOJIS.map((emoji) => (
 										<button
 											key={emoji}
 											onClick={() => triggerEmoji(emoji)}
-											className="text-2xl hover:scale-125 transition-transform active:scale-90 p-1">
+											className="text-lg hover:scale-125 transition-transform active:scale-90 p-1">
 											{emoji}
 										</button>
 									))}
@@ -385,14 +385,14 @@ const TienLenGame: React.FC<TienLenGameProps> = ({
 						</div>
 						<PixelButton
 							variant="secondary"
-							className="py-2 px-5 text-sm"
+							className="py-1 px-3 sm:py-2 sm:px-5 text-xs sm:text-sm"
 							disabled={!isMyTurn || lastPlayedCards.length === 0}
 							onClick={handlePass}>
 							BỎ LƯỢT
 						</PixelButton>
 						<PixelButton
 							variant="primary"
-							className="py-2 px-10 text-sm font-black shadow-[0_0_15px_rgba(79,70,229,0.4)]"
+							className="py-1 px-5 sm:py-2 sm:px-10 text-xs sm:text-sm font-black shadow-[0_0_15px_rgba(79,70,229,0.4)]"
 							disabled={!canPlay}
 							onClick={handlePlay}>
 							ĐÁNH BÀI

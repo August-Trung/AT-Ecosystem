@@ -198,6 +198,143 @@
 				background: url("/img/bg.jpg") no-repeat center center;
 				background-size: cover;
 			}
+
+			/* === LOBBY 2D CANVAS === */
+			.lobby-canvas-container {
+				position: relative;
+				border: 4px solid #1e1b4b;
+				box-shadow:
+					inset 0 0 40px rgba(79, 70, 229, 0.1),
+					0 0 20px rgba(79, 70, 229, 0.15);
+				image-rendering: pixelated;
+				background: #0a0a1a;
+				overflow: hidden;
+			}
+
+			.emoji-bar {
+				display: flex;
+				gap: 4px;
+				justify-content: center;
+				padding: 8px;
+				background: rgba(15, 23, 42, 0.95);
+				border: 2px solid #1e293b;
+				border-top: none;
+			}
+
+			.emoji-bar button {
+				width: 40px;
+				height: 40px;
+				font-size: 1.4rem;
+				border: 2px solid #334155;
+				background: #0f172a;
+				cursor: pointer;
+				transition: all 0.15s;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+			}
+
+			.emoji-bar button:hover {
+				background: #1e293b;
+				transform: scale(1.15);
+				border-color: #4f46e5;
+			}
+
+			.emoji-bar button:active {
+				transform: scale(0.95);
+				background: #4f46e5;
+			}
+
+			.bartender-panel {
+				position: fixed;
+				bottom: 16px;
+				right: 16px;
+				width: 380px;
+				max-height: 480px;
+				z-index: 600;
+				background: rgba(2, 6, 23, 0.97);
+				border: 4px solid #4f46e5;
+				box-shadow:
+					0 0 30px rgba(79, 70, 229, 0.3),
+					0 0 60px rgba(79, 70, 229, 0.1),
+					inset 0 0 20px rgba(79, 70, 229, 0.05);
+				display: flex;
+				flex-direction: column;
+				backdrop-filter: blur(8px);
+			}
+
+			@media (max-width: 640px) {
+				.bartender-panel {
+					width: calc(100% - 32px);
+					bottom: 8px;
+					right: 8px;
+					left: 8px;
+					max-height: 50vh;
+				}
+			}
+
+			/* Floating config panel overlay */
+			.lobby-config-panel {
+				position: absolute;
+				top: 16px;
+				left: 16px;
+				width: 300px;
+				max-height: calc(100% - 32px);
+				z-index: 100;
+				background: rgba(2, 6, 23, 0.92);
+				border: 4px solid #1e293b;
+				box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+				overflow-y: auto;
+				transition: transform 0.3s ease, opacity 0.3s ease;
+			}
+
+			.lobby-config-panel.collapsed {
+				transform: translateX(-110%);
+				opacity: 0;
+				pointer-events: none;
+			}
+
+			.lobby-config-toggle {
+				position: absolute;
+				top: 16px;
+				left: 16px;
+				z-index: 110;
+				background: rgba(15, 23, 42, 0.95);
+				border: 3px solid #334155;
+				color: white;
+				padding: 8px 12px;
+				cursor: pointer;
+				font-size: 1.1rem;
+				transition: all 0.2s;
+			}
+
+			.lobby-config-toggle:hover {
+				background: #1e293b;
+				border-color: #4f46e5;
+			}
+
+			.lobby-config-toggle.panel-open {
+				left: 330px;
+			}
+
+			@media (max-width: 768px) {
+				.lobby-config-panel {
+					width: calc(100% - 32px);
+					max-height: 60vh;
+				}
+				.lobby-config-toggle.panel-open {
+					left: calc(100% - 48px);
+				}
+			}
+
+			@keyframes prompt-float {
+				0%, 100% { transform: translateY(0); }
+				50% { transform: translateY(-4px); }
+			}
+
+			.interaction-prompt {
+				animation: prompt-float 1.5s ease-in-out infinite;
+			}
 		</style>
 		<script type="importmap">
 			{

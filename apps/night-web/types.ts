@@ -116,6 +116,13 @@ export interface GameState {
 	myCoins: number;
 }
 
+export interface Memory {
+	id: string;
+	text: string;
+	alias: string;
+	timestamp: number;
+}
+
 export interface PeerMessage {
 	type:
 		| "chat"
@@ -131,6 +138,12 @@ export interface PeerMessage {
 		| "game_pass"
 		| "game_quit"
 		| "game_emoji"
+		| "game_ttt_invite"
+		| "game_ttt_decline"
+		| "game_ttt_start"
+		| "game_ttt_move"
+		| "game_ttt_quit"
+		| "game_ttt_emoji"
 		| "sketch_data"
 		| "sketch_close"
 		| "jukebox_sync"
@@ -140,7 +153,7 @@ export interface PeerMessage {
 	isTyping?: boolean;
 	avatar?: Avatar;
 	alias?: string;
-	vibe?: "lofi" | "off";
+	vibe?: "lofi" | "rain" | "waves" | "jazz" | "campfire" | "cafe" | "off";
 	messageId?: string;
 	emoji?: string;
 	action?: "add" | "remove";
@@ -152,4 +165,35 @@ export interface PeerMessage {
 	sketch?: string;
 	trackIndex?: number;
 	diceValue?: number;
+	cellIndex?: number;
+	symbol?: "X" | "O";
 }
+
+// === LOBBY 2D TYPES ===
+export interface LobbyPeer {
+	id: string;
+	x: number;
+	y: number;
+	avatar: Avatar;
+	alias: string;
+	emoji?: string;
+	emojiExpiry?: number;
+	lastSeen: number;
+	direction: "left" | "right";
+}
+
+export interface BartenderMessage {
+	id: string;
+	sender: "user" | "bartender";
+	text: string;
+	timestamp: number;
+}
+
+// Room constants (logical coordinates for Canvas)
+export const ROOM_WIDTH = 1200;
+export const ROOM_HEIGHT = 500;
+export const GROUND_Y = 390;
+export const BARTENDER_X = 980;
+export const BARTENDER_ZONE = 130;
+export const MAX_LOBBY_PEERS = 20;
+export const LOBBY_EMOJIS = ["👋", "😊", "🔥", "💤", "🎵", "❤️", "😂", "🤔"];

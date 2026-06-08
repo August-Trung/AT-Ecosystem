@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
-    "test:rules": "node scripts/test-tien-len-rules.mjs",
+    "test:rules": "node scripts/test-tien-len-rules.mjs && node scripts/test-all-features.mjs",
     "verify": "npm run typecheck && npm run test:rules && npm run build"
   },
   "dependencies": {

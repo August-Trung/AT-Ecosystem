@@ -4,9 +4,11 @@ import {
 	Message,
 	AVATAR_ICONS,
 	Mood,
+	MOOD_DATA,
 	REACTION_EMOJIS,
 	GameState,
 	Card,
+	Memory,
 } from "../types";
 import { p2p } from "../services/p2pService";
 import { sound } from "../services/soundService";
@@ -23,6 +25,8 @@ import {
 import PixelButton from "./PixelButton";
 import TienLenGame from "./TienLenGame";
 import SketchCanvas from "./SketchCanvas";
+import TicTacToeGame from "./TicTacToeGame";
+
 
 interface ChatRoomProps {
 	myAvatar: Avatar;
@@ -33,6 +37,8 @@ interface ChatRoomProps {
 	onExit: () => void;
 	onNext: () => void;
 	vibeMode: string;
+	toggleVibeCycle?: () => void;
+	onOpenJukebox: () => void;
 }
 
 const ChatRoom: React.FC<ChatRoomProps> = ({
@@ -44,8 +50,23 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 	onExit,
 	onNext,
 	vibeMode,
+	toggleVibeCycle,
+	onOpenJukebox,
 }) => {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const [messages, setMessages] = useState<Message[]>(() => [
+		{
+			id: `sys-welcome-${Date.now()}`,
+			sender: "system",
+			text: `--- ĐÊM KHUYA GẶP GỠ ---`,
+			timestamp: Date.now(),
+		},
+		{
+			id: `sys-tip-${Date.now()}`,
+			sender: "system",
+			text: `💡 MẸO: NHẤN NÚT [➕] GÓC TRÁI BÊN DƯỚI ĐỂ CHƠI XO, TIẾN LÊN, VẼ TRANH, GIEO XÚC XẮC, HOẶC BẬT JUKEBOX NGHE NHẠC ĐỒNG BỘ YOUTUBE CÙNG BẠN CHAT!`,
+			timestamp: Date.now(),
+		},
+	]);
 	const [inputValue, setInputValue] = useState("");
 	const [isStrangerTyping, setIsStrangerTyping] = useState(false);
 	const [strangerAlias, setStrangerAlias] = useState(
@@ -55,6 +76,21 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 	const [activeReactionId, setActiveReactionId] = useState<string | null>(
 		null,
 	);
+	const [tttGame, setTttGame] = useState<{
+		board: ("X" | "O" | null)[];
+		symbol: "X" | "O";
+		isMyTurn: boolean;
+		status: "idle" | "pendingInvite" | "invited" | "playing" | "ended" | "quit";
+		winner: "me" | "stranger" | "draw" | null;
+	}>({
+		board: Array(9).fill(null),
+		symbol: "X",
+		isMyTurn: false,
+		status: "idle",
+		winner: null,
+	});
+	const [incomingTttEmoji, setIncomingTttEmoji] = useState<string | null>(null);
+	const [sendingMessageIds, setSendingMessageIds] = useState<Set<string>>(new Set());
 	const [reactionPickerSide, setReactionPickerSide] = useState<
 		"above" | "below"
 	>("below");
@@ -63,6 +99,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 	);
 	const [showAppMenu, setShowAppMenu] = useState(false);
 	const [showSketch, setShowSketch] = useState(false);
+
 	const [incomingSketch, setIncomingSketch] = useState<string | null>(null);
 	const [reactionOverlay, setReactionOverlay] = useState<string | null>(null);
 
@@ -90,6 +127,23 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 	const [incomingGameEmoji, setIncomingGameEmoji] = useState<string | null>(
 		null,
 	);
+	const tttGameRef = useRef(tttGame);
+	useEffect(() => {
+		tttGameRef.current = tttGame;
+	}, [tttGame]);
+
+	const checkTttWinner = (b: ("X" | "O" | null)[]) => {
+		const lines = [
+			[0, 1, 2], [3, 4, 5], [6, 7, 8],
+			[0, 3, 6], [1, 4, 7], [2, 5, 8],
+			[0, 4, 8], [2, 4, 6]
+		];
+		for (let i = 0; i < lines.length; i++) {
+			const [x, y, z] = lines[i];
+			if (b[x] && b[x] === b[y] && b[x] === b[z]) return b[x];
+		}
+		return null;
+	};
 
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -127,6 +181,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 
 		p2p.onMessage = (data: any) => {
 			lastActivityRef.current = Date.now();
+			if (data.type === "ping") {
+				return;
+			}
 			if (data.type === "handshake") {
 				setStrangerAlias(data.alias || "Người Lạ");
 			} else if (data.type === "chat") {
@@ -266,10 +323,85 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 			} else if (data.type === "game_emoji") {
 				setIncomingGameEmoji(data.emoji);
 				setTimeout(() => setIncomingGameEmoji(null), 2000);
+			} else if (data.type === "game_ttt_invite") {
+				sound.playMessage();
+				if (tttGameRef.current.status !== "idle") {
+					p2p.sendTttDecline();
+					return;
+				}
+				setTttGame((prev) => ({ ...prev, status: "invited" }));
+			} else if (data.type === "game_ttt_decline") {
+				setMessages((prev) => [
+					...prev,
+					{
+						id: `sys-ttt-dec-${Date.now()}`,
+						sender: "system",
+						text: `ĐỐI THỦ ĐÃ TỪ CHỐI CHƠI CARO.`,
+						timestamp: Date.now(),
+					},
+				]);
+				setTttGame((prev) => ({
+					...prev,
+					status: "idle",
+					board: Array(9).fill(null),
+					winner: null,
+				}));
+			} else if (data.type === "game_ttt_start") {
+				setTttGame((prev) => ({
+					...prev,
+					status: "playing",
+					symbol: data.firstTurn ? "O" : "X",
+					isMyTurn: !!data.firstTurn,
+					board: Array(9).fill(null),
+					winner: null,
+				}));
+			} else if (data.type === "game_ttt_move") {
+				sound.playMessage();
+				setTttGame((prev) => {
+					const newBoard = [...prev.board];
+					newBoard[data.cellIndex] = data.symbol;
+					const win = checkTttWinner(newBoard);
+					const isWin = win === prev.symbol;
+					const isDraw = !win && newBoard.every(c => c !== null);
+					let winner: "me" | "stranger" | "draw" | null = null;
+					let newStatus = prev.status;
+					if (win) {
+						winner = "stranger";
+						newStatus = "ended";
+						setGame(g => ({ ...g, myCoins: g.myCoins - 50 }));
+					} else if (isDraw) {
+						winner = "draw";
+						newStatus = "ended";
+					}
+					return {
+						...prev,
+						board: newBoard,
+						isMyTurn: true,
+						status: newStatus,
+						winner,
+					};
+				});
+			} else if (data.type === "game_ttt_quit") {
+				setTttGame((prev) => ({ ...prev, status: "quit" }));
+			} else if (data.type === "game_ttt_emoji") {
+				setIncomingTttEmoji(data.emoji);
+				setTimeout(() => setIncomingTttEmoji(null), 2000);
+			} else if (data.type === "dice_roll") {
+				sound.playMessage();
+				setMessages((prev) => [
+					...prev,
+					{
+						id: `dice-${Date.now()}`,
+						sender: "system",
+						text: `🎲 ${strangerAlias.toUpperCase()} ĐÃ ĐỔ XÚC XẮC RA: ${data.diceValue}`,
+						timestamp: Date.now(),
+					},
+				]);
 			}
 		};
 
-		p2p.onVibeSync = (v) => setIsSyncing(v === "lofi");
+
+
 		p2p.onDisconnected = () => {
 			setMessages((prev) => [
 				...prev,
@@ -280,12 +412,18 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 					timestamp: Date.now(),
 				},
 			]);
+
 			setGame(INITIAL_GAME_STATE);
+			setTttGame({
+				board: Array(9).fill(null),
+				symbol: "X",
+				isMyTurn: false,
+				status: "idle",
+				winner: null,
+			});
 			setShowSketch(false);
 			setIncomingSketch(null);
 		};
-
-		p2p.sendVibeSync(vibeMode === "lofi" ? "lofi" : "off");
 
 		const bartenderInterval = setInterval(async () => {
 			const now = Date.now();
@@ -310,9 +448,35 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 			}
 		}, 60000);
 
+		// Ping heartbeat to check for dead connections
+		const pingInterval = setInterval(() => {
+			if (p2p.isConnected()) {
+				p2p.sendPing();
+			}
+		}, 4000);
+
+		// Timeout monitor - disconnects if no message/ping within 15 seconds
+		const timeoutCheckInterval = setInterval(() => {
+			if (p2p.isConnected() && Date.now() - lastActivityRef.current > 15000) {
+				setMessages((prev) => [
+					...prev,
+					{
+						id: `sys-timeout-${Date.now()}`,
+						sender: "system",
+						text: `--- MẤT KẾT NỐI VỚI ĐỐI THỦ (HẾT GIỜ CHỜ 15S) ---`,
+						timestamp: Date.now(),
+					},
+				]);
+				p2p.disconnect();
+			}
+		}, 5000);
+
 		return () => {
 			p2p.onMessage = () => {};
+			p2p.onDisconnected = () => {};
 			clearInterval(bartenderInterval);
+			clearInterval(pingInterval);
+			clearInterval(timeoutCheckInterval);
 			window.removeEventListener(
 				"visibilitychange",
 				handleVisibilityChange,
@@ -321,6 +485,79 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 			clearNotification();
 		};
 	}, [strangerAlias]);
+
+	useEffect(() => {
+		setIsSyncing(vibeMode !== "off");
+	}, [vibeMode]);
+
+	const exportMidnightCard = () => {
+		const canvas = document.createElement("canvas");
+		canvas.width = 400;
+		canvas.height = 300;
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return;
+
+		// Background
+		ctx.fillStyle = "#0c0a1c";
+		ctx.fillRect(0, 0, 400, 300);
+
+		// Border
+		ctx.strokeStyle = "#4f46e5";
+		ctx.lineWidth = 6;
+		ctx.strokeRect(8, 8, 384, 284);
+		
+		ctx.strokeStyle = "#ffd700";
+		ctx.lineWidth = 2;
+		ctx.strokeRect(14, 14, 372, 272);
+
+		// Title
+		ctx.fillStyle = "#ffd700";
+		ctx.font = "bold 24px VT323, monospace, Courier";
+		ctx.textAlign = "center";
+		ctx.fillText("✨ MIDNIGHT LOUNGE ✨", 200, 45);
+
+		// Line
+		ctx.strokeStyle = "rgba(79, 70, 229, 0.4)";
+		ctx.beginPath();
+		ctx.moveTo(30, 60);
+		ctx.lineTo(370, 60);
+		ctx.stroke();
+
+		// Info
+		ctx.fillStyle = "#ffffff";
+		ctx.font = "20px VT323, monospace, Courier";
+		ctx.textAlign = "left";
+		ctx.fillText(`BIỆT DANH: ${myAlias.toUpperCase()}`, 40, 95);
+		ctx.fillText(`HÌNH ĐẠI DIỆN: ${myAvatar.toUpperCase()}`, 40, 125);
+		ctx.fillText(`TÂM TRẠNG: ${myMood.toUpperCase()}`, 40, 155);
+		ctx.fillText(`TIN NHẮN TRUYỀN: ${messages.filter(m => m.sender === 'me').length} BẢN TIN`, 40, 185);
+
+		// Line
+		ctx.strokeStyle = "rgba(79, 70, 229, 0.4)";
+		ctx.beginPath();
+		ctx.moveTo(30, 205);
+		ctx.lineTo(370, 205);
+		ctx.stroke();
+
+		// Quote
+		ctx.fillStyle = "#818cf8";
+		ctx.font = "italic 16px VT323, monospace, Courier";
+		ctx.textAlign = "center";
+		const quote = "Thế giới ngoài kia ồn ào quá, ở đây bình yên thôi.";
+		ctx.fillText(`"${quote}"`, 200, 235);
+		
+		ctx.fillStyle = "#475569";
+		ctx.font = "12px VT323, monospace, Courier";
+		ctx.fillText("MIDNIGHT PIXEL CHAT © 2026", 200, 265);
+
+		// Trigger download
+		const dataUrl = canvas.toDataURL("image/png");
+		const link = document.createElement("a");
+		link.download = `midnight-card-${myAlias.toLowerCase().replace(/\s+/g, '-')}.png`;
+		link.href = dataUrl;
+		link.click();
+		sound.playClick();
+	};
 
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -352,7 +589,13 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		if (!inputValue.trim()) return;
 		lastActivityRef.current = Date.now();
 		const msgId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
-		p2p.sendMessage(inputValue, msgId);
+		
+		setSendingMessageIds((prev) => {
+			const next = new Set(prev);
+			next.add(msgId);
+			return next;
+		});
+
 		setMessages((prev) => [
 			...prev,
 			{
@@ -362,8 +605,19 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				timestamp: Date.now(),
 			},
 		]);
+
+		const textToSend = inputValue;
 		setInputValue("");
 		p2p.sendTyping(false);
+
+		setTimeout(() => {
+			p2p.sendMessage(textToSend, msgId);
+			setSendingMessageIds((prev) => {
+				const next = new Set(prev);
+				next.delete(msgId);
+				return next;
+			});
+		}, 400);
 	};
 
 	const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -387,7 +641,13 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				ctx?.drawImage(img, 0, 0, width, height);
 				const compressed = canvas.toDataURL("image/jpeg", 0.6);
 				const msgId = `img-${Date.now()}`;
-				p2p.sendImage(compressed, msgId);
+				
+				setSendingMessageIds((prev) => {
+					const next = new Set(prev);
+					next.add(msgId);
+					return next;
+				});
+
 				setMessages((prev) => [
 					...prev,
 					{
@@ -397,6 +657,15 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 						timestamp: Date.now(),
 					},
 				]);
+
+				setTimeout(() => {
+					p2p.sendImage(compressed, msgId);
+					setSendingMessageIds((prev) => {
+						const next = new Set(prev);
+						next.delete(msgId);
+						return next;
+					});
+				}, 600);
 			};
 			img.src = ev.target?.result as string;
 		};
@@ -520,6 +789,104 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 		setIncomingSketch(null);
 	};
 
+	const inviteToPlayTtt = () => {
+		if (tttGame.status !== "idle") return;
+		sound.playClick();
+		setShowAppMenu(false);
+		p2p.sendTttInvite();
+		setTttGame((prev) => ({ ...prev, status: "pendingInvite" }));
+		setMessages((prev) => [
+			...prev,
+			{
+				id: `sys-ttt-inv-${Date.now()}`,
+				sender: "system",
+				text: `✦ ĐÃ GỬI LỜI MỜI CHƠI CARO XO ĐẾN ${strangerAlias.toUpperCase()}...`,
+				timestamp: Date.now(),
+			},
+		]);
+	};
+
+	const handleRollDice = () => {
+		sound.playClick();
+		const val = Math.floor(Math.random() * 6) + 1;
+		p2p.sendDiceRoll(val);
+		setMessages((prev) => [
+			...prev,
+			{
+				id: `dice-me-${Date.now()}`,
+				sender: "system",
+				text: `🎲 BẠN ĐÃ ĐỔ XÚC XẮC RA: ${val}`,
+				timestamp: Date.now(),
+			},
+		]);
+		setShowAppMenu(false);
+	};
+
+	const handleTttAccept = () => {
+		if (tttGame.status !== "invited") return;
+		const myFirst = Math.random() > 0.5;
+		p2p.sendTttStart(!myFirst);
+		setTttGame((prev) => ({
+			...prev,
+			board: Array(9).fill(null),
+			symbol: myFirst ? "X" : "O",
+			isMyTurn: myFirst,
+			status: "playing",
+			winner: null,
+		}));
+	};
+
+	const handleTttDecline = () => {
+		p2p.sendTttDecline();
+		setTttGame((prev) => ({
+			...prev,
+			status: "idle",
+			board: Array(9).fill(null),
+			winner: null,
+		}));
+	};
+
+	const onTttLocalMove = (cellIndex: number) => {
+		if (tttGame.status !== "playing" || !tttGame.isMyTurn) return;
+		p2p.sendTttMove(cellIndex, tttGame.symbol);
+		setTttGame((prev) => {
+			const newBoard = [...prev.board];
+			newBoard[cellIndex] = prev.symbol;
+			const win = checkTttWinner(newBoard);
+			const isWin = win === prev.symbol;
+			const isDraw = !win && newBoard.every(c => c !== null);
+			let winner: "me" | "stranger" | "draw" | null = null;
+			let newStatus = prev.status;
+			if (isWin) {
+				winner = "me";
+				newStatus = "ended";
+				setGame((g) => ({ ...g, myCoins: g.myCoins + 50 }));
+			} else if (isDraw) {
+				winner = "draw";
+				newStatus = "ended";
+			}
+			return {
+				...prev,
+				board: newBoard,
+				isMyTurn: false,
+				status: newStatus,
+				winner,
+			};
+		});
+	};
+
+	const handleTttQuit = () => {
+		if (tttGame.status === "playing") {
+			p2p.sendTttQuit();
+		}
+		setTttGame((prev) => ({
+			...prev,
+			status: "idle",
+			board: Array(9).fill(null),
+			winner: null,
+		}));
+	};
+
 	const handleGameQuit = () => {
 		if (game.status === "playing") {
 			p2p.sendGameQuit();
@@ -545,7 +912,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 
 	return (
 		<div
-			className={`w-full max-w-2xl h-[85vh] flex flex-col bg-slate-900 pixel-border relative overflow-hidden ${isSyncing && vibeMode === "lofi" ? "animate-pulse-slow" : ""}`}
+			className={`w-full max-w-2xl h-[100dvh] md:h-[85dvh] flex flex-col bg-slate-900 pixel-border relative overflow-hidden ${isSyncing && (vibeMode === "lofi" || vibeMode === "jazz") ? "animate-pulse-slow" : ""}`}
 			onClick={clearNotification}>
 			{reactionOverlay && (
 				<div className="absolute inset-0 z-[500] pointer-events-none overflow-hidden">
@@ -579,33 +946,56 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 						className={`text-3xl bg-slate-800 p-1 pixel-border ${isSyncing ? "animate-bounce" : ""} ${isStrangerAvatarSpecial ? "glow-gold" : ""}`}>
 						{AVATAR_ICONS[strangerAvatar]}
 					</div>
-					<div className="flex flex-col">
-						<span
-							className={`text-lg leading-none uppercase ${isStrangerAvatarSpecial ? "special-sparkle" : "text-white"}`}>
-							{strangerAlias}{" "}
-							{isDoubleSpecial
-								? "💞"
-								: isStrangerAvatarSpecial
-									? "⭐"
-									: ""}
-						</span>
-						<span className="text-sm text-indigo-500 animate-pulse uppercase tracking-widest">
-							{isDoubleSpecial
-								? "✨ TRIPLE MATCH SYNC ✨"
-								: "CONNECTED 1-1"}
-						</span>
+					<div>
+						<div className="flex items-center gap-2">
+							<span className="font-bold text-white uppercase tracking-wider">
+								{strangerAlias}
+							</span>
+							<span className={`text-[10px] px-2 py-0.5 pixel-border ${MOOD_DATA[myMood].color}`}>
+								{MOOD_DATA[myMood].label}
+							</span>
+						</div>
+						<p className="text-[10px] text-green-400 animate-pulse uppercase tracking-widest mt-1">
+							• ĐANG KẾT NỐI
+						</p>
 					</div>
 				</div>
+
 				<div className="flex gap-2">
+					{toggleVibeCycle && (
+						<button
+							onClick={toggleVibeCycle}
+							className={`px-3 py-1 border-2 text-[10px] md:text-xs font-bold pixel-border transition-all ${vibeMode !== "off" ? "bg-indigo-900 border-indigo-700 text-white" : "bg-slate-800 border-slate-700 text-slate-400"}`}>
+							{vibeMode === "lofi"
+								? "📻 LO-FI"
+								: vibeMode === "rain"
+									? "🌧️ RAIN"
+									: vibeMode === "waves"
+										? "🌊 WAVES"
+										: vibeMode === "jazz"
+											? "🎹 JAZZ"
+											: vibeMode === "campfire"
+												? "🔥 CAMPFIRE"
+												: vibeMode === "cafe"
+													? "☕ CAFE"
+													: "🔇 OFF"}
+						</button>
+					)}
+					<button
+						onClick={exportMidnightCard}
+						className="bg-indigo-900 border-2 border-indigo-700 hover:bg-indigo-800 text-[10px] md:text-xs px-2 py-1 uppercase text-white font-bold pixel-border"
+						title="Lưu thẻ kỷ niệm đêm nay">
+						📸 THẺ ĐÊM
+					</button>
 					<PixelButton
 						variant="secondary"
-						className="py-1 px-3 text-base"
+						className="py-1 px-2 md:px-3 text-sm md:text-base"
 						onClick={onNext}>
 						TIẾP
 					</PixelButton>
 					<PixelButton
 						variant="danger"
-						className="py-1 px-3 text-base"
+						className="py-1 px-2 md:px-3 text-sm md:text-base"
 						onClick={onExit}>
 						THOÁT
 					</PixelButton>
@@ -722,6 +1112,11 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 												: isSenderSpecial
 													? "⭐"
 													: ""}
+											{msg.sender === "me" && (
+												<span className="text-[9px] lowercase font-normal ml-2 opacity-60">
+													{sendingMessageIds.has(msg.id) ? "• đang gửi..." : "• đã gửi"}
+												</span>
+											)}
 										</span>
 									</>
 								)}
@@ -739,14 +1134,14 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 
 				{/* SKETCH LAYER */}
 				{showSketch && (
-					<div className="absolute right-4 top-4 z-[250] animate-in slide-in-from-right duration-300">
+					<div className="absolute inset-x-0 bottom-0 md:inset-auto md:right-4 md:top-4 z-[350] bg-slate-900 p-4 border-t-4 border-indigo-900 md:pixel-border animate-in slide-in-from-bottom md:slide-in-from-right duration-300 flex flex-col items-center">
 						<SketchCanvas
 							onDraw={(b) => p2p.sendSketch(b)}
 							incomingSketch={incomingSketch}
 						/>
 						<button
 							onClick={handleCloseSketch}
-							className="w-full bg-rose-900 text-[10px] py-1 text-white border-2 border-rose-700 mt-1">
+							className="w-full bg-rose-900 text-xs py-2 text-white border-4 border-rose-700 mt-2 hover:bg-rose-800 font-bold uppercase">
 							ĐÓNG BẢNG VẼ
 						</button>
 					</div>
@@ -815,6 +1210,65 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 							/>
 						</div>
 					)}
+
+					{/* TicTacToe game views */}
+					{tttGame.status === "invited" && (
+						<div className="absolute inset-0 bg-black/80 flex items-center justify-center p-8 backdrop-blur-sm pointer-events-auto">
+							<div className="bg-slate-900 pixel-border p-6 text-center space-y-4 shadow-[0_0_50px_rgba(0,0,0,1)]">
+								<div className="text-4xl">❌</div>
+								<h2 className="text-xl uppercase tracking-widest text-white">
+									CARO XO (50💰)
+								</h2>
+								<p className="text-slate-400 text-sm">
+									"{strangerAlias}" thách đấu bạn chơi Caro.
+								</p>
+								<div className="flex gap-4 justify-center">
+									<PixelButton
+										variant="secondary"
+										onClick={handleTttDecline}>
+										TỪ CHỐI
+									</PixelButton>
+									<PixelButton
+										variant="primary"
+										onClick={handleTttAccept}>
+										CHẤP NHẬN
+									</PixelButton>
+								</div>
+							</div>
+						</div>
+					)}
+					{tttGame.status === "pendingInvite" && (
+						<div className="absolute inset-0 bg-black/80 flex items-center justify-center p-8 backdrop-blur-sm pointer-events-auto">
+							<div className="bg-slate-900 pixel-border p-6 text-center space-y-4 shadow-[0_0_50px_rgba(0,0,0,1)]">
+								<div className="text-4xl">❌</div>
+								<h2 className="text-xl uppercase tracking-widest text-white">
+									ĐANG CHỜ ĐỐI THỦ
+								</h2>
+								<PixelButton
+									variant="secondary"
+									onClick={handleTttDecline}>
+									HỦY
+								</PixelButton>
+							</div>
+						</div>
+					)}
+					{(tttGame.status === "playing" ||
+						tttGame.status === "ended" ||
+						tttGame.status === "quit") && (
+						<div className="absolute inset-0 pointer-events-auto">
+							<TicTacToeGame
+								symbol={tttGame.symbol}
+								isMyTurn={tttGame.isMyTurn}
+								board={tttGame.board}
+								status={tttGame.status}
+								winner={tttGame.winner}
+								myCoins={game.myCoins}
+								incomingEmoji={incomingTttEmoji}
+								onMove={onTttLocalMove}
+								onExit={handleTttQuit}
+							/>
+						</div>
+					)}
 				</div>
 			</div>
 
@@ -831,7 +1285,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 							clearNotification();
 						}}
 						className={`w-12 h-12 flex items-center justify-center text-2xl bg-slate-900 pixel-border border-slate-800 hover:bg-slate-800 transition-all ${showAppMenu ? "bg-indigo-900 border-indigo-500" : ""}`}>
-						🗃️
+						➕
 					</button>
 					{showAppMenu && (
 						<div className="absolute bottom-14 left-0 bg-slate-900 pixel-border border-indigo-900 p-2 flex flex-col gap-2 min-w-[120px] shadow-2xl animate-in slide-in-from-bottom-2">
@@ -840,6 +1294,12 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 								onClick={inviteToPlay}
 								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
 								🃏 TIẾN LÊN
+							</button>
+							<button
+								type="button"
+								onClick={inviteToPlayTtt}
+								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
+								❌ CARO XO
 							</button>
 							<button
 								type="button"
@@ -860,6 +1320,22 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 								}}
 								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
 								🖼️ GỬI ẢNH
+							</button>
+							<button
+								type="button"
+								onClick={handleRollDice}
+								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
+								🎲 ĐỔ XÚC XẮC
+							</button>
+							<button
+								type="button"
+								onClick={() => {
+									onOpenJukebox();
+									setShowAppMenu(false);
+									sound.playClick();
+								}}
+								className="text-[11px] bg-slate-950 py-2 hover:bg-indigo-900 transition-colors uppercase border border-slate-800">
+								📻 JUKEBOX
 							</button>
 						</div>
 					)}
@@ -885,6 +1361,8 @@ const ChatRoom: React.FC<ChatRoomProps> = ({
 				/>
 				<PixelButton type="submit">GỬI</PixelButton>
 			</form>
+
+
 		</div>
 	);
 };
